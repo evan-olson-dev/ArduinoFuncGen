@@ -194,15 +194,13 @@
                     </div>
 
                     <div>
-                        <h3 class="text-sm font-semibold text-slate-400 mb-3 uppercase tracking-widest">Frequency (Time
-                            Base)</h3>
-                        <!-- Range updated to 25 -->
+                        <h3 class="text-sm font-semibold text-slate-400 mb-3 uppercase tracking-widest">Frequency</h3>
                         <input type="range" min="1" max="25" value="5"
                             class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-400"
                             id="freq-slider">
                         <div class="flex justify-between text-xs text-slate-500 mt-1">
-                            <span>Elongated (Slow)</span>
-                            <span>Contracted (Fast)</span>
+                            <span>Low (Slow)</span>
+                            <span>High (Fast)</span>
                         </div>
                     </div>
 
@@ -235,9 +233,8 @@
 
                 <!-- Controls/Text -->
                 <div class="space-y-6 flex flex-col justify-center h-full">
-                    <!-- FIXED: Removed 'items-center' and added 'flex-col justify-center' for proper text stacking -->
                     <div id="imp-step-text"
-                        class="min-h-[160px] bg-slate-800 p-6 rounded-lg border border-slate-600 text-sm leading-relaxed flex flex-col justify-center shadow-lg">
+                        class="min-h-[350px] flex flex-col justify-center bg-slate-800 p-6 rounded-lg border border-slate-600 text-sm leading-relaxed shadow-lg">
                         Loading...
                     </div>
 
@@ -334,8 +331,8 @@
                     s += drawGroundSVG(420, y, true);
 
                     s += `<text x="250" y="${y - 20}" font-size="12" fill="#64748b">1R</text>`;
-                    s += `<text x="190" y="${y + 50}" font-size="12" fill="#64748b">2R</text>`;
-                    s += `<text x="340" y="${y + 50}" font-size="12" fill="#64748b">2R (Last Bit)</text>`;
+                    s += `<text x="190" y="${y + 100}" font-size="12" fill="#64748b">2R</text>`;
+                    s += `<text x="340" y="${y + 100}" font-size="12" fill="#64748b">2R (Last Bit)</text>`;
                     s += `<text x="360" y="${y - 20}" font-size="12" fill="#64748b">2R (Term)</text>`;
 
                     return s;
@@ -350,14 +347,14 @@
                     s += `<rect x="310" y="110" width="20" height="40" stroke="#f43f5e" fill="white" stroke-width="2"/>`;
                     s += `<line x1="320" y1="90" x2="320" y2="110" stroke="#f43f5e" stroke-width="2"/>`;
                     s += `<line x1="320" y1="150" x2="320" y2="170" stroke="#f43f5e" stroke-width="2"/>`;
-                    s += `<text x="260" y="140" fill="#f43f5e" font-weight="bold">Path A: 2R</text>`;
+                    s += `<text x="320" y="185" fill="#f43f5e" font-weight="bold" text-anchor="middle">Path A: 2R</text>`;
                     s += drawGroundSVG(320, 170);
 
                     // Highlight Right
                     s += `<rect x="360" y="80" width="40" height="20" stroke="#f43f5e" fill="white" stroke-width="2"/>`;
                     s += `<line x1="320" y1="90" x2="360" y2="90" stroke="#f43f5e" stroke-width="2"/>`;
                     s += `<line x1="400" y1="90" x2="420" y2="90" stroke="#f43f5e" stroke-width="2"/>`;
-                    s += `<text x="360" y="60" fill="#f43f5e" font-weight="bold">Path B: 2R</text>`;
+                    s += `<text x="360" y="60" fill="#f43f5e" font-weight="bold" text-anchor="middle">Path B: 2R</text>`;
                     s += drawGroundSVG(420, 90, true);
 
                     // Arrows showing split
@@ -616,7 +613,7 @@
             ctx.lineTo(800, 350);
             ctx.stroke();
 
-            document.getElementById('scope-time').innerText = sliderValue + "x Zoom";
+            document.getElementById('scope-time').innerText = (sliderValue * 50) + " Hz";
         }
 
         init();
