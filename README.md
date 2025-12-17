@@ -32,6 +32,11 @@ A simple yet effective function generator built using an Arduino and an 8-bit R-
 
 ![Circuit Diagram](circuit_diagram.png)
 
+### Simulation
+
+You can view and simulate this project online on Tinkercad:
+[**Tinkercad Simulation: Arduino 8-Bit R-Ladder FuncGen**](https://www.tinkercad.com/things/7jz6wlpdkqy-arduino8bitrladderfuncgen?sharecode=8w037cdZbv54rexPCczLHMjg9Wr_AuL3hwiOL7PJ9r8)
+
 ### R-2R DAC Wiring
 
 Connect the R-2R ladder to pins D2 through D9. 
