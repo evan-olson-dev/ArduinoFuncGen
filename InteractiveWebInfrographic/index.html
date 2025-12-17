@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>6-Bit R-2R DAC Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Custom Switch Styling */
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #10B981;
+        }
+
+        .toggle-checkbox:checked+.toggle-label {
+            background-color: #10B981;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+
+    <!-- Header -->
+    <header class="bg-slate-800 border-b border-slate-700 p-6 sticky top-0 z-50 shadow-lg">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+                <h1
+                    class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
+                    6-Bit R-2R DAC
+                </h1>
+                <p class="text-slate-400 text-sm mt-1">Interactive Simulator & Guide</p>
+            </div>
+            <div class="flex gap-4 text-sm font-semibold">
+                <a href="#manual" class="hover:text-cyan-400 transition-colors">Manual Control</a>
+                <a href="#scope" class="hover:text-cyan-400 transition-colors">Oscilloscope</a>
+                <a href="#impedance" class="hover:text-cyan-400 transition-colors">The "2R" Proof</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto p-6 space-y-12">
+
+        <!-- Section 1: Manual Bit Control -->
+        <section id="manual" class="space-y-6">
+            <div class="flex justify-between items-end border-b border-slate-700 pb-2">
+                <h2 class="text-2xl font-bold text-cyan-400">1. Manual Bit Control</h2>
+                <div class="text-right">
+                    <p class="text-xs text-slate-400 uppercase tracking-wider">Output Voltage</p>
+                    <p id="voltage-display" class="text-4xl font-mono font-bold text-green-400">0.00 V</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- Ladder Visualization -->
+                <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-inner relative overflow-hidden">
+                    <h3 class="text-sm font-semibold text-slate-400 mb-4 uppercase tracking-widest">Resistor Ladder
+                        State</h3>
+
+                    <!-- SVG Ladder Representation -->
+                    <div class="relative h-64 w-full flex items-center justify-center">
+                        <svg id="ladder-svg" width="100%" height="100%" viewBox="0 0 600 200" class="text-slate-500">
+                            <!-- Main Line -->
+                            <line x1="50" y1="100" x2="550" y2="100" stroke="currentColor" stroke-width="2" />
+
+                            <!-- Legs (Bit Inputs) -->
+                            <g id="leg-D2" class="transition-colors duration-300">
+                                <line x1="100" y1="100" x2="100" y2="180" stroke="currentColor" stroke-width="2" />
+                                <circle cx="100" cy="180" r="4" fill="currentColor" />
+                            </g>
+                            <g id="leg-D3" class="transition-colors duration-300">
+                                <line x1="180" y1="100" x2="180" y2="180" stroke="currentColor" stroke-width="2" />
+                                <circle cx="180" cy="180" r="4" fill="currentColor" />
+                            </g>
+                            <g id="leg-D4" class="transition-colors duration-300">
+                                <line x1="260" y1="100" x2="260" y2="180" stroke="currentColor" stroke-width="2" />
+                                <circle cx="260" cy="180" r="4" fill="currentColor" />
+                            </g>
+                            <g id="leg-D5" class="transition-colors duration-300">
+                                <line x1="340" y1="100" x2="340" y2="180" stroke="currentColor" stroke-width="2" />
+                                <circle cx="340" cy="180" r="4" fill="currentColor" />
+                            </g>
+                            <g id="leg-D6" class="transition-colors duration-300">
+                                <line x1="420" y1="100" x2="420" y2="180" stroke="currentColor" stroke-width="2" />
+                                <circle cx="420" cy="180" r="4" fill="currentColor" />
+                            </g>
+                            <g id="leg-D7" class="transition-colors duration-300">
+                                <line x1="500" y1="100" x2="500" y2="180" stroke="currentColor" stroke-width="2" />
+                                <circle cx="500" cy="180" r="4" fill="currentColor" />
+                            </g>
+
+                            <!-- Output Probe -->
+                            <line x1="550" y1="100" x2="580" y2="100" stroke="#f43f5e" stroke-width="3" />
+                            <circle cx="580" cy="100" r="6" fill="#f43f5e" />
+                            <text x="560" y="80" fill="#f43f5e" font-size="12">Vout</text>
+
+                            <!-- Labels -->
+                            <text x="90" y="195" font-size="12" fill="currentColor">D2 (LSB)</text>
+                            <text x="175" y="195" font-size="12" fill="currentColor">D3</text>
+                            <text x="255" y="195" font-size="12" fill="currentColor">D4</text>
+                            <text x="335" y="195" font-size="12" fill="currentColor">D5</text>
+                            <text x="415" y="195" font-size="12" fill="currentColor">D6</text>
+                            <text x="495" y="195" font-size="12" fill="currentColor">D7 (MSB)</text>
+                        </svg>
+                    </div>
+                    <p class="text-xs text-center text-slate-500 mt-2">Active bits inject current into the ladder. The
+                        MSB (D7) is closest to the output.</p>
+                </div>
+
+                <!-- Controls -->
+                <div class="space-y-4">
+                    <p class="text-slate-300 mb-4">Toggle bits to see how superposition adds voltages together.</p>
+
+                    <div id="bit-controls" class="space-y-3">
+                        <!-- Controls generated by JS -->
+                    </div>
+
+                    <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 mt-6">
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-slate-400">Total Binary Value:</span>
+                            <span id="binary-val" class="font-mono text-cyan-400">000000</span>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-slate-400">Decimal Value:</span>
+                            <span id="decimal-val" class="font-mono text-cyan-400">0</span>
+                        </div>
+                        <div class="w-full bg-slate-700 h-2 rounded-full mt-3 overflow-hidden">
+                            <div id="voltage-bar" class="bg-green-400 h-full transition-all duration-300"
+                                style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 2: Oscilloscope -->
+        <section id="scope" class="space-y-6">
+            <div class="flex justify-between items-end border-b border-slate-700 pb-2">
+                <h2 class="text-2xl font-bold text-cyan-400">2. Oscilloscope Simulator</h2>
+                <div class="flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
+                    <span class="text-xs text-red-400 font-mono">LIVE</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <!-- Canvas -->
+                <div class="lg:col-span-2 bg-black rounded-xl border-4 border-slate-600 shadow-2xl relative">
+                    <!-- Grid Lines -->
+                    <div class="absolute inset-0 opacity-20 pointer-events-none"
+                        style="background-image: linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px); background-size: 40px 40px;">
+                    </div>
+
+                    <canvas id="scopeCanvas" width="800" height="400" class="w-full h-full block"></canvas>
+
+                    <!-- Scope UI Overlays -->
+                    <div class="absolute bottom-4 right-4 font-mono text-xs text-yellow-500">
+                        TIME/DIV: <span id="scope-time">Variable</span>
+                    </div>
+                </div>
+
+                <!-- Controls -->
+                <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 space-y-6">
+                    <div>
+                        <h3 class="text-sm font-semibold text-slate-400 mb-3 uppercase tracking-widest">Waveform</h3>
+                        <div class="flex gap-2">
+                            <button onclick="setMode(0)" id="btn-saw"
+                                class="flex-1 py-2 bg-cyan-600 hover:bg-cyan-500 rounded text-sm font-bold transition-all border border-cyan-400">Sawtooth</button>
+                            <button onclick="setMode(1)" id="btn-tri"
+                                class="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm font-bold transition-all border border-slate-600">Triangle</button>
+                            <button onclick="setMode(2)" id="btn-sin"
+                                class="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm font-bold transition-all border border-slate-600">Sine</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h3 class="text-sm font-semibold text-slate-400 mb-3 uppercase tracking-widest">Frequency (Time
+                            Base)</h3>
+                        <!-- Range updated to 25 -->
+                        <input type="range" min="1" max="25" value="5"
+                            class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                            id="freq-slider">
+                        <div class="flex justify-between text-xs text-slate-500 mt-1">
+                            <span>Elongated (Slow)</span>
+                            <span>Contracted (Fast)</span>
+                        </div>
+                    </div>
+
+                    <div class="p-4 bg-slate-700/30 rounded border border-slate-600 text-sm text-slate-300">
+                        <p><strong>Note:</strong> This simulates a standing wave triggering, just like a real
+                            oscilloscope. Move the slider to change the time scale.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Section 3: Impedance Visualizer (Refined Layout) -->
+        <section id="impedance" class="space-y-6">
+            <div class="border-b border-slate-700 pb-2">
+                <h2 class="text-2xl font-bold text-cyan-400">3. The "Infinite 2R" Proof</h2>
+                <p class="text-slate-400 mt-2">Why does the resistance always look the same? Use the buttons to simplify
+                    the circuit step-by-step.</p>
+            </div>
+
+            <!-- Changed Grid Layout for better spacing -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+
+                <!-- SVG Container -->
+                <div
+                    class="bg-white relative w-full aspect-[2/1] rounded-xl flex items-center justify-center overflow-hidden border-4 border-slate-700 shadow-xl">
+                    <svg id="imp-svg" width="100%" height="100%" viewBox="0 0 600 260">
+                        <!-- Content generated by JS -->
+                    </svg>
+                </div>
+
+                <!-- Controls/Text -->
+                <div class="space-y-6 flex flex-col justify-center h-full">
+                    <!-- FIXED: Removed 'items-center' and added 'flex-col justify-center' for proper text stacking -->
+                    <div id="imp-step-text"
+                        class="min-h-[160px] bg-slate-800 p-6 rounded-lg border border-slate-600 text-sm leading-relaxed flex flex-col justify-center shadow-lg">
+                        Loading...
+                    </div>
+
+                    <div class="flex gap-4">
+                        <button onclick="prevImpStep()"
+                            class="flex-1 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm font-bold border border-slate-500 transition-colors shadow-lg">Previous
+                            Step</button>
+                        <button onclick="nextImpStep()"
+                            class="flex-1 py-3 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-bold border border-cyan-400 transition-colors shadow-lg shadow-cyan-900/50">Next
+                            Step</button>
+                    </div>
+
+                    <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700 text-xs text-slate-400">
+                        <p class="font-bold text-slate-300 mb-2 uppercase tracking-wide">Diagram Legend</p>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="flex items-center gap-2">
+                                <div class="w-3 h-3 bg-green-400/20 border border-green-400 rounded"></div>
+                                <span>Combining Parts</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <div class="w-3 h-3 bg-blue-600 border border-blue-600 rounded"></div>
+                                <span>New Equivalent</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="text-center p-8 text-slate-600 text-sm">
+        Built for the Arduino 6-Bit Function Generator Project
+    </footer>
+
+    <script>
+        // --- Constants & State ---
+        const bits = [0, 0, 0, 0, 0, 0]; // D2 to D7
+        const bitWeights = [1, 2, 4, 8, 16, 32]; // D2 is LSB (1), D7 is MSB (32)
+        const bitVoltages = [0.078, 0.156, 0.312, 0.625, 1.25, 2.5]; // Approx contributions
+
+        // Corrected Sine Table (0-63)
+        const sineTable = [
+            32, 35, 38, 41, 44, 46, 49, 51,
+            54, 56, 58, 59, 61, 62, 62, 63,
+            63, 63, 62, 62, 61, 59, 58, 56,
+            54, 51, 49, 46, 44, 41, 38, 35,
+            32, 29, 26, 23, 20, 18, 15, 13,
+            10, 8, 6, 5, 3, 2, 2, 1,
+            1, 1, 2, 2, 3, 5, 6, 8,
+            10, 13, 15, 18, 20, 23, 26, 29
+        ];
+
+        let mode = 0; // 0=Saw, 1=Tri, 2=Sine
+        let sliderValue = 5; // Default slider position
+
+        // Scope Canvas
+        const canvas = document.getElementById('scopeCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- Impedance Visualizer Logic ---
+        let impStep = 0;
+
+        // Revised Coordinates to center in the 600x260 viewBox
+        const impSteps = [
+            {
+                // NEW Step 1: Full Diagram
+                text: "<strong class='text-cyan-400 text-lg block mb-2'>Step 1: The Full Picture</strong>Here is a segment of the R-2R ladder. It looks complex, but it is just a repeating pattern.<br><br>To understand the math, we cannot start at the beginning (left). We must solve it from the <strong>Termination</strong> end (far right) and work backwards.",
+                draw: () => {
+                    let s = "";
+                    const y = 90;
+
+                    // Draw 3 repeating stages to look like a full ladder
+                    // Stage 1 (Left)
+                    s += `<line x1="50" y1="${y}" x2="140" y2="${y}" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4"/>`; // Incoming signal
+                    s += `<rect x="140" y="${y + 20}" width="20" height="40" stroke="black" fill="white" stroke-width="2"/>`; // Leg
+                    s += `<line x1="150" y1="${y}" x2="150" y2="${y + 20}" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="150" y1="${y + 60}" x2="150" y2="${y + 80}" stroke="black" stroke-width="2"/>`;
+                    s += drawGroundSVG(150, y + 80);
+                    s += `<rect x="190" y="${y - 10}" width="40" height="20" stroke="black" fill="white" stroke-width="2"/>`; // Rung
+                    s += `<line x1="150" y1="${y}" x2="190" y2="${y}" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="230" y1="${y}" x2="270" y2="${y}" stroke="black" stroke-width="2"/>`;
+
+                    // Stage 2 (Middle)
+                    s += `<rect x="260" y="${y + 20}" width="20" height="40" stroke="black" fill="white" stroke-width="2"/>`; // Leg
+                    s += `<line x1="270" y1="${y}" x2="270" y2="${y + 20}" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="270" y1="${y + 60}" x2="270" y2="${y + 80}" stroke="black" stroke-width="2"/>`;
+                    s += drawGroundSVG(270, y + 80);
+                    s += `<rect x="310" y="${y - 10}" width="40" height="20" stroke="black" fill="white" stroke-width="2"/>`; // Rung
+                    s += `<line x1="270" y1="${y}" x2="310" y2="${y}" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="350" y1="${y}" x2="390" y2="${y}" stroke="black" stroke-width="2"/>`;
+
+                    // Stage 3 (End/LSB) - Highlighted
+                    s += `<rect x="380" y="${y + 20}" width="20" height="40" stroke="black" fill="white" stroke-width="2"/>`; // LSB Leg
+                    s += `<line x1="390" y1="${y}" x2="390" y2="${y + 20}" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="390" y1="${y + 60}" x2="390" y2="${y + 80}" stroke="black" stroke-width="2"/>`;
+                    s += drawGroundSVG(390, y + 80);
+
+                    // Termination
+                    s += `<rect x="430" y="${y - 10}" width="40" height="20" stroke="#f43f5e" fill="white" stroke-width="2"/>`; // Term R
+                    s += `<line x1="390" y1="${y}" x2="430" y2="${y}" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="470" y1="${y}" x2="480" y2="${y}" stroke="black" stroke-width="2"/>`;
+                    s += drawGroundSVG(480, y, true);
+
+                    // Box to show focus area for next step
+                    s += `<rect x="360" y="40" width="160" height="150" stroke="#22d3ee" fill="none" stroke-width="2" stroke-dasharray="5,5"/>`;
+                    s += `<text x="365" y="30" fill="#22d3ee" font-size="12" font-weight="bold">We zoom in here next</text>`;
+
+                    // Labels
+                    s += `<text x="135" y="${y + 100}" font-size="10" fill="#64748b">2R</text>`;
+                    s += `<text x="255" y="${y + 100}" font-size="10" fill="#64748b">2R</text>`;
+                    s += `<text x="375" y="${y + 100}" font-size="10" fill="#64748b">2R (LSB)</text>`;
+                    s += `<text x="200" y="${y - 20}" font-size="10" fill="#64748b">R</text>`;
+                    s += `<text x="320" y="${y - 20}" font-size="10" fill="#64748b">R</text>`;
+                    s += `<text x="425" y="${y - 25}" font-size="10" fill="#f43f5e">Term (2R)</text>`;
+
+                    return s;
+                }
+            },
+            {
+                // Step 2 (Previously Step 1)
+                text: "<strong class='text-cyan-400 text-lg block mb-2'>Step 2: Zooming In</strong>Now we focus strictly on that last section (the LSB). <br><br>We see two vertical resistors side-by-side:<br>1. The <strong>Input Resistor (2R)</strong> from the LSB pin.<br>2. The <strong>Termination Resistor (2R)</strong> connected to Ground.",
+                draw: () => {
+                    let s = `<line x1="150" y1="90" x2="300" y2="90" stroke="#94a3b8" stroke-width="2"/>`;
+
+                    // LSB Leg
+                    s += `<rect x="290" y="110" width="20" height="40" stroke="black" fill="white" stroke-width="2"/>`;
+                    s += `<line x1="300" y1="90" x2="300" y2="110" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="300" y1="150" x2="300" y2="170" stroke="black" stroke-width="2"/>`;
+                    s += `<text x="320" y="135" font-size="12" fill="#64748b">Input Resistor (2R)</text>`;
+
+                    // Term Resistor
+                    s += `<rect x="340" y="80" width="40" height="20" stroke="#f43f5e" fill="rgba(244, 63, 94, 0.1)" stroke-width="3"/>`;
+                    s += `<line x1="300" y1="90" x2="340" y2="90" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="380" y1="90" x2="390" y2="90" stroke="black" stroke-width="2"/>`;
+                    s += `<text x="345" y="70" font-size="12" font-weight="bold" fill="#f43f5e">Termination (2R)</text>`;
+
+                    s += drawGroundSVG(300, 170);
+                    s += drawGroundSVG(390, 90, true);
+
+                    return s;
+                }
+            },
+            {
+                // Step 3
+                text: "<strong class='text-cyan-400 text-lg block mb-2'>Step 3: Identify Parallel</strong>Since both resistors start at the same wire and end at Ground, they are in <strong>Parallel</strong>.<br><br>Notice how the current can split and go down either path to reach ground.",
+                draw: () => {
+                    // Highlight Parallel box
+                    let s = `<rect x="270" y="50" width="160" height="150" stroke="#4ade80" fill="rgba(74, 222, 128, 0.2)" stroke-width="3" rx="10"/>`;
+
+                    s += `<line x1="150" y1="90" x2="300" y2="90" stroke="#94a3b8" stroke-width="2"/>`;
+                    s += `<rect x="290" y="110" width="20" height="40" stroke="black" fill="white" stroke-width="2"/>`;
+                    s += `<line x1="300" y1="90" x2="300" y2="110" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="300" y1="150" x2="300" y2="170" stroke="black" stroke-width="2"/>`;
+                    s += `<rect x="340" y="80" width="40" height="20" stroke="black" fill="white" stroke-width="2"/>`;
+                    s += `<line x1="300" y1="90" x2="340" y2="90" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="380" y1="90" x2="390" y2="90" stroke="black" stroke-width="2"/>`;
+
+                    s += `<text x="280" y="40" font-size="14" font-weight="bold" fill="#16a34a">Parallel Pair</text>`;
+
+                    s += drawGroundSVG(300, 170);
+                    s += drawGroundSVG(390, 90, true);
+                    return s;
+                }
+            },
+            {
+                // Step 4
+                text: "<strong class='text-cyan-400 text-lg block mb-2'>Step 4: Simplify (The Halving Trick)</strong>The formula for two equal parallel resistors is simple: you just cut the value in half.<br><br><span class='font-mono bg-slate-900 px-2 py-1 rounded text-green-400'>2R || 2R = 1R</span><br><br>We replace the pair with a single virtual resistor of value <strong>1R</strong>.",
+                draw: () => {
+                    let s = `<line x1="150" y1="90" x2="300" y2="90" stroke="#94a3b8" stroke-width="2"/>`;
+
+                    // The Equivalent 1R
+                    s += `<rect x="290" y="110" width="20" height="40" stroke="#2563eb" fill="white" stroke-width="3"/>`;
+                    s += `<line x1="300" y1="90" x2="300" y2="110" stroke="#2563eb" stroke-width="2"/>`;
+                    s += `<line x1="300" y1="150" x2="300" y2="170" stroke="#2563eb" stroke-width="2"/>`;
+                    s += `<text x="320" y="135" fill="#2563eb" font-weight="bold">1R (Equivalent)</text>`;
+                    s += drawGroundSVG(300, 170);
+
+                    // Fade in the horizontal rung for next step
+                    s += `<rect x="200" y="80" width="40" height="20" stroke="black" fill="white" stroke-width="2"/>`;
+                    s += `<line x1="150" y1="90" x2="200" y2="90" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="240" y1="90" x2="300" y2="90" stroke="black" stroke-width="2"/>`;
+                    s += `<text x="210" y="75" font-size="12">1R (Rung)</text>`;
+                    return s;
+                }
+            },
+            {
+                // Step 5
+                text: "<strong class='text-cyan-400 text-lg block mb-2'>Step 5: Add the Series Rung</strong>Now we look to the left. The signal must travel through the horizontal 'Rung' resistor (1R) to get to our new equivalent part.<br><br>This resistor is in <strong>SERIES</strong> with our equivalent resistor.",
+                draw: () => {
+                    // Green box covering Series pair
+                    let s = `<rect x="180" y="50" width="140" height="140" stroke="#4ade80" fill="rgba(74, 222, 128, 0.2)" stroke-width="3" rx="10"/>`;
+
+                    s += `<rect x="290" y="110" width="20" height="40" stroke="black" fill="white" stroke-width="2"/>`;
+                    s += `<line x1="300" y1="90" x2="300" y2="110" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="300" y1="150" x2="300" y2="170" stroke="black" stroke-width="2"/>`;
+                    s += drawGroundSVG(300, 170);
+
+                    s += `<rect x="200" y="80" width="40" height="20" stroke="black" fill="white" stroke-width="2"/>`;
+                    s += `<line x1="150" y1="90" x2="200" y2="90" stroke="black" stroke-width="2"/>`;
+                    s += `<line x1="240" y1="90" x2="300" y2="90" stroke="black" stroke-width="2"/>`;
+
+                    s += `<text x="180" y="40" font-size="14" font-weight="bold" fill="#16a34a">Series Pair</text>`;
+                    return s;
+                }
+            },
+            {
+                // Step 6
+                text: "<strong class='text-cyan-400 text-lg block mb-2'>Step 6: The Magic Reset</strong>Resistors in series simply add up.<br><br><span class='font-mono bg-slate-900 px-2 py-1 rounded text-green-400'>1R + 1R = 2R</span><br><br><strong>Look what happened!</strong> We replaced the complex end of the circuit with a single <strong>2R</strong> resistor to ground. This is identical to where we started in Step 2. <br><br>This means we can peel back the ladder layer-by-layer, and it will ALWAYS look like 2R.",
+                draw: () => {
+                    // The Resulting 2R equivalent
+                    let s = `<rect x="190" y="110" width="20" height="40" stroke="#2563eb" fill="white" stroke-width="3"/>`;
+                    s += `<line x1="200" y1="90" x2="200" y2="110" stroke="#2563eb" stroke-width="2"/>`;
+                    s += `<line x1="200" y1="150" x2="200" y2="170" stroke="#2563eb" stroke-width="2"/>`;
+                    s += `<text x="220" y="135" fill="#2563eb" font-weight="bold">2R (New Total)</text>`;
+                    s += drawGroundSVG(200, 170);
+
+                    s += `<line x1="100" y1="90" x2="200" y2="90" stroke="black" stroke-width="2"/>`;
+                    s += `<text x="50" y="95" fill="#94a3b8">To Next Bit...</text>`;
+                    return s;
+                }
+            }
+        ];
+
+        function renderImpStep() {
+            const container = document.getElementById('imp-svg');
+            const s = impSteps[impStep];
+            document.getElementById('imp-step-text').innerHTML = s.text;
+            container.innerHTML = s.draw();
+        }
+
+        function drawGroundSVG(x, y, sideways = false) {
+            if (sideways) {
+                return `
+                    <line x1="${x}" y1="${y}" x2="${x}" y2="${y + 10}" stroke="black" stroke-width="2" transform="rotate(-90 ${x} ${y})"/>
+                    <line x1="${x - 10}" y1="${y + 10}" x2="${x + 10}" y2="${y + 10}" stroke="black" stroke-width="2" transform="rotate(-90 ${x} ${y})"/>
+                    <line x1="${x - 6}" y1="${y + 14}" x2="${x + 6}" y2="${y + 14}" stroke="black" stroke-width="2" transform="rotate(-90 ${x} ${y})"/>
+                    <line x1="${x - 2}" y1="${y + 18}" x2="${x + 2}" y2="${y + 18}" stroke="black" stroke-width="2" transform="rotate(-90 ${x} ${y})"/>
+                `;
+            }
+            return `
+                <line x1="${x - 10}" y1="${y}" x2="${x + 10}" y2="${y}" stroke="black" stroke-width="2"/>
+                <line x1="${x - 6}" y1="${y + 4}" x2="${x + 6}" y2="${y + 4}" stroke="black" stroke-width="2"/>
+                <line x1="${x - 2}" y1="${y + 8}" x2="${x + 2}" y2="${y + 8}" stroke="black" stroke-width="2"/>
+            `;
+        }
+
+        window.nextImpStep = function () {
+            if (impStep < 5) impStep++; // UPDATED: Limit is now 5 (6 steps total)
+            renderImpStep();
+        };
+        window.prevImpStep = function () {
+            if (impStep > 0) impStep--;
+            renderImpStep();
+        };
+
+
+        // --- Initialization ---
+        function init() {
+            createManualControls();
+            updateManualDisplay();
+            scopeLoop(); // Start animation loop
+            renderImpStep(); // Start impedance tool
+        }
+
+        // --- Manual Control Section ---
+        function createManualControls() {
+            const container = document.getElementById('bit-controls');
+            // Create controls in reverse order (D7 top, D2 bottom)
+            for (let i = 5; i >= 0; i--) {
+                const pinName = `D${i + 2}`;
+                const label = i === 5 ? "MSB (Most Significant)" : i === 0 ? "LSB (Least Significant)" : "";
+                const voltage = bitVoltages[i].toFixed(3);
+
+                const div = document.createElement('div');
+                div.className = "flex items-center justify-between bg-slate-700/50 p-3 rounded hover:bg-slate-700 transition-colors";
+                div.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <span class="font-mono font-bold text-lg w-8 text-slate-300">${pinName}</span>
+                        <span class="text-xs text-slate-400 uppercase">${label}</span>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <span class="font-mono text-cyan-400 text-sm">+${voltage}V</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" class="sr-only peer" onchange="toggleBit(${i})">
+                            <div class="w-11 h-6 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500"></div>
+                        </label>
+                    </div>
+                `;
+                container.appendChild(div);
+            }
+        }
+
+        window.toggleBit = function (index) {
+            bits[index] = bits[index] === 0 ? 1 : 0;
+            updateManualDisplay();
+
+            // Visual feedback on ladder SVG
+            const legId = `leg-D${index + 2}`;
+            const leg = document.getElementById(legId);
+            if (bits[index]) {
+                leg.classList.add('text-green-400');
+                leg.classList.remove('text-slate-500');
+            } else {
+                leg.classList.remove('text-green-400');
+                leg.classList.add('text-slate-500');
+            }
+        };
+
+        function calculateVoltage(val) {
+            // FIXED: Division by 64 instead of 63 to represent real R-2R physics
+            // Range is now 0 to 4.92V (5V * 63/64), not 0 to 5.0V
+            return (val / 64) * 5.0;
+        }
+
+        function updateManualDisplay() {
+            // Calculate decimal value from bits
+            let decimal = 0;
+            let binaryStr = "";
+            for (let i = 5; i >= 0; i--) {
+                if (bits[i]) decimal += bitWeights[i];
+                binaryStr += bits[i];
+            }
+
+            const volts = calculateVoltage(decimal);
+
+            // DOM Updates
+            document.getElementById('voltage-display').innerText = volts.toFixed(2) + " V";
+            document.getElementById('binary-val').innerText = binaryStr;
+            document.getElementById('decimal-val').innerText = decimal;
+
+            // Bar Width
+            const pct = (decimal / 63) * 100;
+            document.getElementById('voltage-bar').style.width = `${pct}%`;
+        }
+
+        // --- Oscilloscope Section ---
+
+        // Mode Switching
+        window.setMode = function (m) {
+            mode = m;
+            // Reset highlighting
+            ['btn-saw', 'btn-tri', 'btn-sin'].forEach(id => {
+                document.getElementById(id).classList.replace('bg-cyan-600', 'bg-slate-700');
+                document.getElementById(id).classList.replace('border-cyan-400', 'border-slate-600');
+            });
+            // Highlight active
+            const activeBtn = ['btn-saw', 'btn-tri', 'btn-sin'][m];
+            document.getElementById(activeBtn).classList.replace('bg-slate-700', 'bg-cyan-600');
+            document.getElementById(activeBtn).classList.replace('border-slate-600', 'border-cyan-400');
+        };
+
+        // Slider
+        document.getElementById('freq-slider').addEventListener('input', (e) => {
+            sliderValue = parseInt(e.target.value);
+        });
+
+        // Loop
+        function scopeLoop() {
+            drawScope();
+            requestAnimationFrame(scopeLoop);
+        }
+
+        // Returns DAC value (0-63) for a given time step t
+        function getDacValueAtTime(t) {
+            // Sawtooth: 0..63 repeat
+            if (mode === 0) {
+                return t % 64;
+            }
+            // Triangle: 0..63..0 repeat (Period 126 approx)
+            else if (mode === 1) {
+                const period = 126;
+                const phase = t % period;
+                if (phase <= 63) return phase;
+                else return 126 - phase;
+            }
+            // Sine: Lookup table
+            else if (mode === 2) {
+                return sineTable[t % 64];
+            }
+            return 0;
+        }
+
+        function drawScope() {
+            // Clear Screen
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Calculate Scale Factor based on Slider
+            // Low Slider = Show FEW waves (Zoom In / Elongated)
+            // High Slider = Show MANY waves (Zoom Out / Contracted)
+            // We map slider 1-100 to a step multiplier.
+            // Small multiplier = x advances t slowly.
+
+            const timeMultiplier = sliderValue / 10.0;
+
+            // Draw Beam
+            ctx.beginPath();
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#22d3ee';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = ctx.strokeStyle;
+
+            // We iterate pixels across the screen
+            for (let x = 0; x < canvas.width; x++) {
+
+                // Convert screen X pixel to a virtual time 't'
+                // This simulates the standing wave trigger
+                const t = Math.floor(x * timeMultiplier);
+
+                // Get the voltage level (0-63)
+                const val = getDacValueAtTime(t);
+                const volts = calculateVoltage(val);
+
+                // Map Volts to Y
+                // 5V = 50px, 0V = 350px (300px range)
+                const y = 350 - (volts / 5.0 * 300);
+
+                if (x === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // Draw Center Line (Ground) slightly visible
+            ctx.strokeStyle = '#333';
+            ctx.shadowBlur = 0;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, 350);
+            ctx.lineTo(800, 350);
+            ctx.stroke();
+
+            // Update Voltage Text with current value at end of sweep or middle
+            // Just for flavor, pick the middle value
+            const midT = Math.floor((canvas.width / 2) * timeMultiplier);
+            const midVal = getDacValueAtTime(midT);
+            document.getElementById('scope-time').innerText = sliderValue + "x Zoom";
+        }
+
+        init();
+    </script>
+</body>
+
+</html>
