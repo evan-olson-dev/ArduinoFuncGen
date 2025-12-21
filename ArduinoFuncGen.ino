@@ -62,8 +62,8 @@ void setup() {
   }
 
   // 4. Configure Non-Blocking ADC (Analog Read)
-  // Set ADC reference to AVCC (5V) and select A0 channel
-  ADMUX = (1 << REFS0); 
+  // Set ADC reference to AVCC (5V) and explicitly select A0 channel (binary 0000)
+  ADMUX = (1 << REFS0) | (0 << MUX3) | (0 << MUX2) | (0 << MUX1) | (0 << MUX0); 
   // Enable ADC, set prescaler to 128 (16MHz/128 = 125kHz ADC clock)
   ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
   // Start the first conversion
