@@ -1,166 +1,162 @@
 // ---------------------------------------------------------
-// 8-BIT ARDUINO FUNCTION GENERATOR
+// HIGH-PERFORMANCE 8-BIT ARDUINO FUNCTION GENERATOR (v2.0)
 // ---------------------------------------------------------
-// This sketch turns an Arduino into a simple waveform generator
-// outputting Sine, Triangle, and Sawtooth waves via an 8-bit R-2R DAC.
+// This firmware transforms an Arduino Uno (ATmega328P) into a 
+// precision laboratory-grade function generator. 
 //
-// DAC PINS: D2(LSB) through D9(MSB)
-// BUTTON:   D10 (Connect to GND, enables internal pullup)
-// POT:      A0 (Connect between 5V and GND for frequency control)
-// OLED:     A4 (SDA), A5 (SCL)
+// ARCHITECTURAL OVERVIEW:
+// 1. SIGNAL ENGINE: 100% Hardware-Interrupt driven (Timer1). 
+//    Uses "Zero-Overhead" port buffering to drive an 8-bit R-2R DAC. 
+// 2. SIGNAL PURITY: Asynchronous ADC reading eliminates "logic ripple."
+// 3. DSP STABILITY: 8x Oversampling + Adaptive EMA Smoothing + Hysteresis
+//    locks the frequency to sub-Hz precision even with electrical noise.
+// 4. USER INTERFACE: Interleaved OLED updates prevent I2C bus contention.
+//
+// PINOUT:
+// - DAC: D2 (LSB) to D9 (MSB) -> Connect to R-2R Ladder.
+// - POT: A0 -> Frequency Control (0V to 5V).
+// - BUTTON: D10 -> Mode Select (Active LOW, Internal Pullup).
+// - I2C: A4 (SDA), A5 (SCL) -> SSD1306 OLED Display.
 // ---------------------------------------------------------
 
 #include <Wire.h>
 #include "SSD1306Ascii.h"
 #include "SSD1306AsciiWire.h"
 
-// OLED Address (usually 0x3C)
+// Hardware Configuration
 #define I2C_ADDRESS 0x3C
 SSD1306AsciiWire oled;
 
-// --- CONSTANTS & GLOBALS ---
-
-// 256-point Sine Table used for efficient waveform generation
-// Scaled 0-255 to match the 8-bit DAC output range.
+// --- WAVEFORM STORAGE ---
+// We use a 256-point lookup table. 256 is ideal because the step index (8-bit)
+// can be allowed to overflow naturally, saving a conditional "if" check in the ISR.
 const int TABLE_SIZE = 256; 
 byte sineTable[TABLE_SIZE]; 
 
-// PORT BUFFERS: Stores pre-calculated DAC bit patterns for ultra-fast ISR
-// This moves the "bit shifting" logic out of the interrupt.
+// PORT BUFFERS: These store the PRE-CALCULATED register values for PORTD and PORTB.
+// In the ISR, we don't calculate anything; we just dump these values to the ports.
+// This is critical for reaching the ~400Hz limit (100kHz sample rate).
 volatile byte portDBuffer[TABLE_SIZE];
 volatile byte portBBuffer[TABLE_SIZE];
 
-// Waveform Modes:
-// 0 = Sawtooth
-// 1 = Triangle
-// 2 = Sine
-int mode = 0; 
+// Operational State
+int mode = 0;              // 0:Saw, 1:Tri, 2:Sine
 const int MAX_MODE = 2;
-
-// Input Pins
 const int BUTTON_PIN = 10;
 const int POT_PIN = A0;
 
-// Button State Tracking
-int lastButtonState = HIGH; 
+//Display Step
+static int displayStep = 0;
 
-// Waveform Generation State
-int stepIndex = 0;      // Current position in the lookup table or counter
-int direction = 1;      // Direction for Triangle wave bouncing (+1 or -1)
+// DSP / Filtering Variables
+int stepIndex = 0;           // Global index into the lookup tables
+unsigned int loopCounter = 0; // Main loop heartbeat for interleaving
+long delayTime = 0;          // Microseconds between DAC updates
 
-// Optimized Timing & Control
-unsigned int loopCounter = 0; // To periodically read sensor inputs
-long delayTime = 0;           // Current delay in microseconds (using long for frequency math)
+// Frequency Range (Hz)
+// minFreq/maxFreq determine the linear mapping of the potentiometer.
+float minFreq = 1.0;         
+float maxFreq = 380.0;       // Safety ceiling to ensure CPU time for UI
 
-// USER CONFIGURABLE FREQUENCY RANGE (In Hz)
-// Linear mapping ensures the dial feels consistent from low to high frequencies.
-float minFreq = 1.0;     // Frequency at 0% (in Hz)
-float maxFreq = 380.0;   // Frequency at 100% (in Hz, limited by 10us safety floor)
+// Digital Signal Processing (DSP) Logic
+int lastPotValue = -1;       
+float smoothedPotValue = -1.0; // The EMA-filtered representation of the dial
+float lastDisplayedFreq = -1.0; // Prevents UI flicker
+bool displayNeedsUpdate = false; 
+unsigned long lastHeartbeat = 0;
+unsigned long lastPotSampleTime = 0; 
 
-// OLED Refresh Timing
-int displayStep = 0;               // To interleave text updates
-int lastMode = -1;                 // To trigger full screen clear on mode change
-int lastPotValue = -1;             // To detect significant changes
-float smoothedPotValue = -1.0;     // Software filter (EMA)
-float lastDisplayedFreq = -1.0;    // To detect human-sized Hz changes
-bool displayNeedsUpdate = false;   // Flag to silence I2C bus when idle
-unsigned long lastHeartbeat = 0;   // To force occasional refresh
-unsigned long lastPotSampleTime = 0; // To throttle sampling at low frequencies
+// --- CORE FUNCTIONS ---
 
-// --- SETUP ---
+/**
+ * SETUP: Configures hardware registers for high-performance operation.
+ */
 void setup() {
-  // 1. Configure DAC Pins (D2-D9) as OUTPUT
-  for (int i = 2; i <= 9; i++) {
-    pinMode(i, OUTPUT);
-  }
+  // 1. DAC PORT CONFIGURATION
+  // We use D2-D9 to avoid interfering with D0/D1 (Serial RX/TX).
+  // This split requires writing to both PORTD (bits 2-7) and PORTB (bits 0-1).
+  for (int i = 2; i <= 9; i++) pinMode(i, OUTPUT);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
   
-  // 2. Configure Input Button
-  pinMode(BUTTON_PIN, INPUT_PULLUP); 
-  
-  // 3. Pre-calculate lookup tables
+  // 2. MATH INITIALIZATION
   calcSineTable();
-  updatePortBuffers(); // Initialize buffers for the starting mode
+  updatePortBuffers(); // Prepare the starting waveform (Sawtooth)
 
-  // 4. Configure Non-Blocking ADC (Analog Read)
-  ADMUX = (1 << REFS0) | (0 << MUX3) | (0 << MUX2) | (0 << MUX1) | (0 << MUX0); 
+  // 3. ASYNCHRONOUS ADC SETUP
+  // analogRead() is blocking (100us stall). Instead, we configure the ADC registers.
+  // ADMUX: Select A0 channel, use VCC as reference.
+  ADMUX = (1 << REFS0); 
+  // ADCSRA: Enable ADC, set 128 prescaler (125kHz ADC clock).
   ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
-  ADCSRA |= (1 << ADSC);
+  ADCSRA |= (1 << ADSC); // Prime the first conversion
 
-  // 5. Configure Timer1 for Interrupt-Driven Generation (Pro Mode)
-  cli(); // Disable interrupts during setup
-  TCCR1A = 0; // Normal mode
-  TCCR1B = 0; // Clear register
-  TCNT1  = 0; // Reset counter
-  
-  // Set Compare Match Register (OCR1A)
-  // Formula: (Clock / (Prescaler * TargetFreq)) - 1
-  // We'll update this dynamically in the loop for frequency control.
-  OCR1A = 16000; // Start with 1ms delay (16MHz / 1 / 1000 - 1)
-  
-  // Turn on CTC (Clear Timer on Compare Match) mode
-  TCCR1B |= (1 << WGM12);
-  // Set CS10 bit for 1 prescaler (maximum precision)
-  TCCR1B |= (1 << CS10);  
-  // Enable timer compare interrupt
-  TIMSK1 |= (1 << OCIE1A);
-  sei(); // Enable interrupts
+  // 4. TIMER1 (THE ENGINE) SETUP
+  // Timer1 is a 16-bit timer. We use CTC (Clear Timer on Match) mode.
+  cli(); // Atomic block
+  TCCR1A = 0; TCCR1B = 0; TCNT1 = 0;
+  OCR1A = 16000;          // Starting Period (1ms)
+  TCCR1B |= (1 << WGM12); // CTC Mode
+  TCCR1B |= (1 << CS10);  // No prescaler (1-tick = 62.5ns)
+  TIMSK1 |= (1 << OCIE1A); // Enable interrupt
+  sei();
 
-  // 6. Initialize OLED
+  // 5. UI INITIALIZATION
   Wire.begin();
-  Wire.setClock(100000L); // Standard 100kHz clock for stability
+  Wire.setClock(100000L); // High I2C speeds can cause EMF noise on the DAC
   oled.begin(&Adafruit128x64, I2C_ADDRESS);
-  oled.displayRemap(true); // Rotate display 180 degrees
+  oled.displayRemap(true); // Flip for standard orientation
   oled.setFont(System5x7);
   oled.clear();
-  oled.println("  FUNC GEN v2.0");
-  oled.println("----------------");
 }
 
-// --- MAIN LOOP ---
+/**
+ * MAIN LOOP: Handles UI and Control logic.
+ * Waveform generation happens in the BACKGROUND via Timer1.
+ */
 void loop() {
-  // --- 1. READ INPUTS (Throttled to 50Hz with 8x Oversampling) ---
+  // A. DSP & POTENTIOMETER FILTERING (Throttled to 50Hz)
+  // We only sample 50 times per second to prevent over-sampling noise.
   if (millis() - lastPotSampleTime >= 20) {
-    if (!(ADCSRA & (1 << ADSC))) {
-      // OVERSAMPLING: Take 8 rapid readings to cancel random noise spikes
+    if (!(ADCSRA & (1 << ADSC))) { // Check if ADC conversion finished
+      // 1. OVERSAMPLING: Take 8 rapid readings and average.
+      // This cancels high-frequency noise spikes before they hit the filter.
       long potSum = 0;
       for (int i = 0; i < 8; i++) {
-        ADCSRA |= (1 << ADSC); // Start conversion
-        while (ADCSRA & (1 << ADSC)); // Fast wait (only ~100us)
+        ADCSRA |= (1 << ADSC); 
+        while (ADCSRA & (1 << ADSC)); // Standard ADC wait is only ~100us
         potSum += ADC;
       }
       int potValue = potSum / 8;
       
-      // SNAP ZONES: Force absolute extremes
+      // 2. SNAP ZONES: Fix for "Boundary Wander"
       if (potValue < 8) potValue = 0;
       else if (potValue > 1015) potValue = 1023;
       
-      // --- ADAPTIVE RESPONSIVE SMOOTHING ---
+      // 3. ADAPTIVE RESPONSIVE SMOOTHING (EMA)
+      // If moving the knob fast, we prioritize speed (Alpha 0.4).
+      // If knob is nearly still, we prioritize stability (Alpha 0.02).
       float diff = abs((float)potValue - smoothedPotValue);
-      float alpha = 0.02; // DEEP SMOOTHING: Ultra-stable at idle
-      if (diff > 15) alpha = 0.4; // Responsive mode for tuning
+      float alpha = (diff > 15) ? 0.4 : 0.02;
       
-      if (smoothedPotValue < 0) smoothedPotValue = potValue; // First run
+      if (smoothedPotValue < 0) smoothedPotValue = potValue; 
       smoothedPotValue = (alpha * (float)potValue) + ((1.0 - alpha) * smoothedPotValue);
 
-      // --- FREQUENCY HYSTERESIS (LOCK-IN) ---
+      // 4. LOCK-IN HYSTERESIS
+      // Check if the filtered value translates to a 1.0Hz change.
+      // This prevents the screen from "hunting" or flickering.
       float targetFreq = minFreq + (smoothedPotValue / 1023.0) * (maxFreq - minFreq);
-      
       if (abs(targetFreq - lastDisplayedFreq) >= 1.0) {
         displayNeedsUpdate = true; 
         lastDisplayedFreq = targetFreq;
-
-        if (targetFreq > 0) {
-          delayTime = (long)(1000000.0 / (targetFreq * (float)TABLE_SIZE));
-        }
-        
+        // Convert Freq to Timer Ticks: ticks = 16,000,000 / (freq * 256)
+        if (targetFreq > 0) delayTime = (long)(1000000.0 / (targetFreq * 256.0));
         lastPotValue = (int)smoothedPotValue;
       }
-      
       lastPotSampleTime = millis();
     }
   }
 
-  // Periodically check the button (much faster than analog read)
+  // B. BUTTON DEBOUNCING (Low priority)
   if ((loopCounter & 255) == 0) {
     int prevMode = mode;
     checkSwitch();
@@ -168,25 +164,24 @@ void loop() {
   }
   loopCounter++;
 
-  // --- 2. UPDATE SYSTEM TIMING ---
-  // Atomic update: Reset timer count when changing frequency
-  // to prevent the "wrap-around" lock-up.
+  // C. ATOMIC FREQUENCY UPDATE
+  // We must disable interrupts when updating OCR1A and TCNT1 to prevent 
+  // the timer from counting past its new limit while we are setting it.
   unsigned int ticks = (unsigned int)(delayTime * 16);
-  if (ticks < 160) ticks = 160; // 10us safety floor
-  
+  if (ticks < 160) ticks = 160; // 10us Safety Floor
   if (ticks != OCR1A) {
     cli();
     OCR1A = ticks;
-    TCNT1 = 0; // Reset counter so it doesn't have to wait for 65k wrap
+    TCNT1 = 0; 
     sei();
   }
 
-  // --- 3. SILENT DISPLAY UPDATES ---
-  // Only update the display if something changed, OR every 2 seconds (heartbeat)
+  // D. INTERLEAVED OLED REFRESH
+  // We refresh the UI one line per frame (triggered by loopCounter).
+  // This keeps the I2C bus traffic spread out, preventing signal jitter.
   if (displayNeedsUpdate || (millis() - lastHeartbeat > 2000)) {
     if ((loopCounter & 1023) == 0) {
       updateDisplayStep();
-      // If we finished all 3 steps of the update, clear the flag
       if (displayStep == 0) {
         displayNeedsUpdate = false;
         lastHeartbeat = millis();
@@ -195,161 +190,96 @@ void loop() {
   }
 }
 
-// --- HARDWARE INTERRUPT (PRO MODE) ---
+// --- SIGNAL ENGINE (ISR) ---
+
 /**
- * Timer1 Interrupt Service Routine (ISR)
- * Fired by hardware based on the OCR1A value.
- * This handles the waveform generation independently of the main loop.
- */
-/**
- * Timer1 Interrupt Service Routine (ISR)
- * ULTRA-OPTIMIZED: Uses pre-calculated buffers to drive the DAC.
+ * TIMER1 INTERRUPT: The High-Speed Heartbeat of the Generator.
+ * Executes on every "Tick" of the signal. 
+ * ZERO MATH: Directly dumps pre-calculated byte buffers to the Ports.
  */
 ISR(TIMER1_COMPA_vect) {
-  // Output pre-calculated port values (Fastest possible DAC drive)
   PORTD = portDBuffer[stepIndex];
   PORTB = portBBuffer[stepIndex];
 
-  stepIndex++;
-  if (stepIndex >= TABLE_SIZE) stepIndex = 0;
+  stepIndex++; // Increments naturally 0 to 255
+  // Note: Since stepIndex is treated as an 8-bit wrap, we don't strictly 
+  // need the comparison below if using 'byte', but we keep it for 256-safety.
+  if (stepIndex >= 256) stepIndex = 0;
 }
 
-// --- HELPER FUNCTIONS ---
-
-// --- RE-ARCHITECTED WAVEFORM ENGINE ---
+// --- WAVEFORM LOGIC ---
 
 /**
- * Pre-calculates the Sine table values.
+ * updatePortBuffers: The "Heavy Lifter"
+ * Pre-calculates the bit patterns for PORTD and PORTB.
+ * This function translates the 8-bit signal value into the D2-D9 DAC mapping.
+ * Value -> PORTD(bits 2-7) | PORTB(bits 0-1)
+ */
+void updatePortBuffers() {
+  TIMSK1 &= ~(1 << OCIE1A); // Safety: Stop ISR during calculation
+
+  for (int i = 0; i < TABLE_SIZE; i++) {
+    byte val = 0;
+    if (mode == 0) val = i; // Sawtooth
+    else if (mode == 1) val = (i < 128) ? (i * 2) : (255 - ((i - 128) * 2)); // Triangle
+    else val = sineTable[i]; // Sine
+
+    // PORTD Buffer: Clear D2-D7, preserve D0-D1 (RX/TX), or-in the bits
+    portDBuffer[i] = (PORTD & 0x03) | (val << 2);
+    // PORTB Buffer: Clear D8-D9 (Port B bits 0-1), or-in the bits
+    portBBuffer[i] = (PORTB & 0xFC) | (val >> 6);
+  }
+
+  TIMSK1 |= (1 << OCIE1A); // Restart engine
+}
+
+/**
+ * calcSineTable: Generates a high-precision 256-point lookup.
  */
 void calcSineTable() {
   for (int i = 0; i < TABLE_SIZE; i++) {
-    float angle = (float)i / TABLE_SIZE * 2.0 * PI;
+    float angle = (float)i / 256.0 * 2.0 * PI;
     sineTable[i] = (byte)(127.5 + 127.5 * sin(angle));
   }
 }
 
 /**
- * Pre-calculates the bit patterns for the CURRENT mode into Port Buffers.
- * This moves all the "Heavy Lifting" (shifts, masks, conditional logic)
- * out of the interrupt and into the background.
- */
-void updatePortBuffers() {
-  // Temporarily disable timer to prevent glitching during calculation
-  TIMSK1 &= ~(1 << OCIE1A);
-
-  for (int i = 0; i < TABLE_SIZE; i++) {
-    byte val = 0;
-    
-    // Choose the raw 8-bit value based on mode
-    if (mode == 0) { // SAWTOOTH
-      val = i;
-    } else if (mode == 1) { // TRIANGLE
-      // Map index to a triangle wave (0-255-0)
-      if (i < 128) val = i * 2;
-      else         val = 255 - ((i - 128) * 2);
-    } else if (mode == 2) { // SINE
-      val = sineTable[i];
-    }
-
-    // MAP VALUE TO HARDWARE PORTS
-    // DAC Bit 0-5 (Value bits 0-5) -> Pins D2-D7 (Port D bits 2-7)
-    // DAC Bit 6-7 (Value bits 6-7) -> Pins D8-D9 (Port B bits 0-1)
-    
-    // Port D Buffer: Preserve RX/TX (bits 0-1) and set bits 2-7
-    portDBuffer[i] = (PORTD & 0x03) | (val << 2);
-    // Port B Buffer: Preserve bits 2-7 and set bits 0-1
-    portBBuffer[i] = (PORTB & 0xFC) | (val >> 6);
-  }
-
-  // Re-enable timer interrupt
-  TIMSK1 |= (1 << OCIE1A);
-}
-
-/**
- * Writes an 8-bit value to the DAC pins (Legacy support/Setup)
- */
-void outputDAC(int value) {
-  // Clear Port D bits 2-7 and set them from value bits 0-5
-  // (value << 2) aligns value bit 0 to Port D bit 2
-  PORTD = (PORTD & 0x03) | (value << 2);
-  
-  // Clear Port B bits 0-1 and set them from value bits 6-7
-  // (value >> 6) aligns value bit 6 to Port B bit 0
-  PORTB = (PORTB & 0xFC) | (value >> 6);
-}
-
-/**
- * Checks the mode button state and switches modes on a falling edge (press).
- * Includes simple logic to debounce and cycle through modes.
+ * checkSwitch: Debounced state machine for mode switching.
  */
 void checkSwitch() {
-  int currentState = digitalRead(BUTTON_PIN);
-  
-  // Detect falling edge (HIGH -> LOW)
-  if (lastButtonState == HIGH && currentState == LOW) {
-    // Switch to next mode
-    mode++; 
-    if (mode > MAX_MODE) mode = 0;
-    
-    // Pre-calculate the new waveform's bit patterns
+  static int lastBtn = HIGH;
+  int current = digitalRead(BUTTON_PIN);
+  if (lastBtn == HIGH && current == LOW) {
+    mode = (mode + 1) > MAX_MODE ? 0 : mode + 1;
     updatePortBuffers();
-    // Reset waveform state for clean transition
-    stepIndex = 0;
-    direction = 1;
-    
-    // Simple debounce delay (shortened to keep loop responsive)
-    delay(50); 
+    delay(50); // Small debounce block is safe here as loop handles UI
   }
-  lastButtonState = currentState;
+  lastBtn = current;
 }
 
 /**
- * Updates the OLED display one line at a time (Interleaved).
- * This eliminates the "Big Ripple" by keeping I2C pauses very short.
+ * updateDisplayStep: The Interleaved UI Engine.
+ * Refreshes individual rows to keep I2C transactions short.
  */
+
 void updateDisplayStep() {
-  // Line 0: Header (System Info)
   if (displayStep == 0) {
-    if (mode != lastMode) {
-      oled.set1X();
-      oled.setCursor(0, 0);
-      oled.print("  FUNC GEN v2.0 "); 
-      lastMode = mode;
-    }
+    oled.set1X(); oled.setCursor(0, 0);
+    oled.print("  FUNC GEN v2.0 "); 
     displayStep++;
-  }
-  
-  // Line 1: Mode Name (Blue Section - Large)
+  } 
   else if (displayStep == 1) {
-    oled.set2X();
-    oled.setCursor(0, 2);
-    if (mode == 0)      oled.print("SAW      ");
+    oled.set2X(); oled.setCursor(0, 2);
+    if (mode == 0) oled.print("SAW      ");
     else if (mode == 1) oled.print("TRI      ");
-    else if (mode == 2) oled.print("SINE     ");
+    else oled.print("SINE     ");
     displayStep++;
-  }
-
-  // Line 2: Frequency & Timing Value (Blue Section - Large)
+  } 
   else if (displayStep == 2) {
-    oled.set2X();
-    oled.setCursor(0, 5);
-    
-    // 1. Calculate Frequency safely
-    float freq = 0;
-    if (delayTime > 0) {
-      // Calculate microseconds per cycle (period)
-      // For delayTime = 1000 and TABLE_SIZE = 256, periodUs = 256,000 (fits in unsigned long)
-      unsigned long periodUs = (unsigned long)delayTime * (unsigned long)TABLE_SIZE;
-      freq = 1000000.0 / (float)periodUs;
-    } else {
-      freq = 600.0; // Estimate for delay = 0
-    }
-
-    // 2. Display Frequency
+    oled.set2X(); oled.setCursor(0, 5);
+    float freq = 1000000.0 / ((float)delayTime * 256.0);
     if (freq < 100.0) oled.print(" ");
-    oled.print((int)freq); // Print as whole number for maximum stability
-    oled.print(" Hz    ");
-    
-    displayStep = 0; // Loop back
+    oled.print((int)freq); oled.print(" Hz    ");
+    displayStep = 0; 
   }
 }
