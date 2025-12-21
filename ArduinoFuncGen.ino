@@ -53,8 +53,7 @@ int minFreqDelay = 1000;   // Delay for 0% (in microseconds)
 int maxFreqDelay = 0;      // Delay for 100% (in microseconds)
 
 // OLED Refresh Timing
-unsigned long lastDisplayUpdate = 0;
-const long DISPLAY_INTERVAL = 250; // Update display every 250ms
+int displayStep = 0;               // To interleave text updates
 int lastMode = -1;                 // To trigger full screen clear on mode change
 
 // --- SETUP ---
@@ -87,6 +86,7 @@ void setup() {
   Wire.begin();
   Wire.setClock(400000L); // Set I2C clock to 400kHz for speed
   oled.begin(&Adafruit128x64, I2C_ADDRESS);
+  oled.displayRemap(true); // Rotate display 180 degrees
   oled.setFont(System5x7);
   oled.clear();
   oled.println("  FUNC GEN v2.0");
@@ -115,11 +115,11 @@ void loop() {
   }
   loopCounter++;
 
-  // --- 2. UPDATE DISPLAY (Throttled) ---
-  unsigned long currentMillis = millis();
-  if (currentMillis - lastDisplayUpdate >= DISPLAY_INTERVAL) {
-    lastDisplayUpdate = currentMillis;
-    updateDisplay();
+  // --- 2. UPDATE DISPLAY (Interleaved) ---
+  // Every 1024 iterations (~25-50ms), we update exactly ONE line of text.
+  // This spreads the I2C cost so the waveform doesn't ripple.
+  if ((loopCounter & 1023) == 0) {
+    updateDisplayStep();
   }
 
   // --- 3. GENERATE WAVEFORMS ---
@@ -206,40 +206,51 @@ void checkSwitch() {
 }
 
 /**
- * Updates the OLED display with the current frequency and mode.
- * Uses lightweight text-only updates to minimize waveform impact.
+ * Updates the OLED display one line at a time (Interleaved).
+ * This eliminates the "Big Ripple" by keeping I2C pauses very short.
  */
-void updateDisplay() {
-  // If mode changed, clear the screen for a clean UI
-  if (mode != lastMode) {
-    oled.clear();
-    oled.println("  FUNC GEN v2.0");
-    oled.println("----------------");
-    lastMode = mode;
+void updateDisplayStep() {
+  // Line 0: Header (Static / Yellow Section)
+  if (displayStep == 0) {
+    if (mode != lastMode) {
+      oled.setCursor(0, 0);
+      oled.print("  FUNC GEN v2.0 "); 
+      lastMode = mode;
+    }
+    displayStep++;
+  }
+  
+  // Line 1: Mode Name (Blue Section Start)
+  else if (displayStep == 1) {
+    oled.setCursor(0, 2);
+    oled.print("MODE: ");
+    if (mode == 0)      oled.print("SAWTOOTH ");
+    else if (mode == 1) oled.print("TRIANGLE ");
+    else if (mode == 2) oled.print("SINE     ");
+    displayStep++;
   }
 
-  // Display Mode
-  oled.setCursor(0, 3);
-  oled.print("MODE: ");
-  if (mode == 0)      oled.println("SAWTOOTH ");
-  else if (mode == 1) oled.println("TRIANGLE ");
-  else if (mode == 2) oled.println("SINE     ");
-
-  // Display Frequency Info
-  oled.setCursor(0, 5);
-  oled.print("DELAY: ");
-  oled.print(delayTime);
-  oled.print(" us    ");
-
-  oled.setCursor(0, 7);
-  // Rough estimate: f = 1 / (delayTime * tableSize)
-  float freq = 0;
-  if (delayTime > 0) {
-    freq = 1000000.0 / (float)(delayTime * TABLE_SIZE);
-  } else {
-    freq = 600; // Theoretical max approx (will vary by mode)
+  // Line 2: Delay Value (Blue Section)
+  else if (displayStep == 2) {
+    oled.setCursor(0, 4);
+    oled.print("DELAY: ");
+    oled.print(delayTime);
+    oled.print(" us    ");
+    displayStep++;
   }
-  oled.print("FREQ: ~");
-  oled.print(freq, 1);
-  oled.print(" Hz    ");
+
+  // Line 3: Estimated Frequency (Blue Section)
+  else if (displayStep == 3) {
+    oled.setCursor(0, 6);
+    float freq = 0;
+    if (delayTime > 0) {
+      freq = 1000000.0 / (float)(delayTime * TABLE_SIZE);
+    } else {
+      freq = 600; 
+    }
+    oled.print("FREQ: ~");
+    oled.print(freq, 1);
+    oled.print(" Hz    ");
+    displayStep = 0; // Loop back
+  }
 }
