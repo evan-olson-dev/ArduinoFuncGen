@@ -36,7 +36,6 @@ int direction = 1;      // Direction for Triangle wave bouncing (+1 or -1)
 
 // Optimized Timing & Control
 unsigned int loopCounter = 0; // To periodically read sensor inputs
-int pot100 = 0;               // Potentiometer value mapped 0-100
 int delayTime = 0;            // Current delay in microseconds
 
 // USER CONFIGURABLE FREQUENCY RANGE
@@ -77,13 +76,11 @@ void loop() {
   
   // Check if the ADC conversion is finished (ADSC bit goes to 0)
   if (!(ADCSRA & (1 << ADSC))) {
-    int potValue = ADC; // Read the 10-bit result
+    int potValue = ADC; // Read the full 10-bit result (0-1023)
     
-    // Convert analog read (0-1023) to 0-100
-    pot100 = map(potValue, 0, 1023, 0, 100);
-    
-    // Map 0-100 to the user-defined delay range
-    delayTime = map(pot100, 0, 100, minFreqDelay, maxFreqDelay);
+    // Map full 10-bit resolution directly to the delay range.
+    // This removes the "steps" and "dead zones" caused by 0-100 mapping.
+    delayTime = map(potValue, 0, 1023, minFreqDelay, maxFreqDelay);
     
     // Start the NEXT conversion immediately
     ADCSRA |= (1 << ADSC);
