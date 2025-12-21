@@ -61,8 +61,11 @@ float maxFreq = 380.0;   // Frequency at 100% (in Hz, limited by 10us safety flo
 int displayStep = 0;               // To interleave text updates
 int lastMode = -1;                 // To trigger full screen clear on mode change
 int lastPotValue = -1;             // To detect significant changes
+float smoothedPotValue = -1.0;     // Software filter (EMA)
+float lastDisplayedFreq = -1.0;    // To detect human-sized Hz changes
 bool displayNeedsUpdate = false;   // Flag to silence I2C bus when idle
 unsigned long lastHeartbeat = 0;   // To force occasional refresh
+unsigned long lastPotSampleTime = 0; // To throttle sampling at low frequencies
 
 // --- SETUP ---
 void setup() {
@@ -115,35 +118,50 @@ void setup() {
 
 // --- MAIN LOOP ---
 void loop() {
-  // --- 1. READ CONTROLS (Non-Blocking) ---
-  
-  // Check if the ADC conversion is finished (ADSC bit goes to 0)
-  if (!(ADCSRA & (1 << ADSC))) {
-    int potValue = ADC; // Read the full 10-bit result (0-1023)
-    
-    // SNAP ZONES: Force absolute extremes at the edges of the dial
-    // to ensure reliable access to min/max despite the delta filter.
-    if (potValue < 8) potValue = 0;
-    else if (potValue > 1015) potValue = 1023;
-    
-    // DELTA-BASED FILTER: Only react if the pot moves beyond noise threshold
-    // (threshold of 8 = approx 1% of travel)
-    if (abs(potValue - lastPotValue) > 8) {
-      // LINEAR FREQUENCY MAPPING: Potentiometer -> Target Hz
-      float targetFreq = minFreq + ((float)potValue / 1023.0) * (maxFreq - minFreq);
+  // --- 1. READ INPUTS (Throttled to 50Hz) ---
+  // Throttling prevents the ADC from being over-sampled when the CPU is idle 
+  // at low frequencies, which otherwise amplifies electrical noise.
+  if (millis() - lastPotSampleTime >= 20) {
+    // Check if the ADC conversion is finished (ADSC bit goes to 0)
+    if (!(ADCSRA & (1 << ADSC))) {
+      int potValue = ADC; // Read the full 10-bit result (0-1023)
       
-      // Convert Hz to Hardware Delay (microseconds per sample)
-      // delay = 1,000,000 / (freq * 256 samples)
-      if (targetFreq > 0) {
-        delayTime = (long)(1000000.0 / (targetFreq * (float)TABLE_SIZE));
-      }
+      // SNAP ZONES: Force absolute extremes at the edges of the dial
+      // to ensure reliable access to min/max despite the delta filter.
+      if (potValue < 8) potValue = 0;
+      else if (potValue > 1015) potValue = 1023;
+      
+      // --- ADAPTIVE RESPONSIVE SMOOTHING ---
+      // We adjust the filter strength (alpha) based on how fast the pot is moving.
+      // If moving fast, alpha is high (low lag). If nearly still, alpha is tiny (heavy filtering).
+      float diff = abs((float)potValue - smoothedPotValue);
+      float alpha = 0.05; // Heaviest smoothing for idle
+      if (diff > 10) alpha = 0.3; // Responsive mode for actual tuning
+      
+      if (smoothedPotValue < 0) smoothedPotValue = potValue; // First run
+      smoothedPotValue = (alpha * (float)potValue) + ((1.0 - alpha) * smoothedPotValue);
 
-      lastPotValue = potValue;
-      displayNeedsUpdate = true; // Flag for OLED refresh
+      // --- FREQUENCY HYSTERESIS (LOCK-IN) ---
+      // Only recalculate the hardware delay and update the display if the
+      // change is significant enough to "break the lock."
+      float targetFreq = minFreq + (smoothedPotValue / 1023.0) * (maxFreq - minFreq);
+      
+      if (abs(targetFreq - lastDisplayedFreq) >= 1.0) {
+        // LOCK IN: Frequency is updated and display flag is set
+        displayNeedsUpdate = true; 
+        lastDisplayedFreq = targetFreq;
+
+        if (targetFreq > 0) {
+          delayTime = (long)(1000000.0 / (targetFreq * (float)TABLE_SIZE));
+        }
+        
+        lastPotValue = (int)smoothedPotValue;
+      }
+      
+      // Start the NEXT conversion immediately
+      ADCSRA |= (1 << ADSC);
+      lastPotSampleTime = millis();
     }
-    
-    // Start the NEXT conversion immediately
-    ADCSRA |= (1 << ADSC);
   }
 
   // Periodically check the button (much faster than analog read)
