@@ -25,6 +25,11 @@ SSD1306AsciiWire oled;
 const int TABLE_SIZE = 256; 
 byte sineTable[TABLE_SIZE]; 
 
+// PORT BUFFERS: Stores pre-calculated DAC bit patterns for ultra-fast ISR
+// This moves the "bit shifting" logic out of the interrupt.
+volatile byte portDBuffer[TABLE_SIZE];
+volatile byte portBBuffer[TABLE_SIZE];
+
 // Waveform Modes:
 // 0 = Sawtooth
 // 1 = Triangle
@@ -66,13 +71,9 @@ void setup() {
   // 2. Configure Input Button
   pinMode(BUTTON_PIN, INPUT_PULLUP); 
   
-  // 3. Pre-calculate Sine Table
-  // Generates a lookup table to avoid expensive `sin()` calls in the loop.
-  // The value is offset by 127.5 and scaled to fit the 0-255 byte range.
-  for (int i = 0; i < TABLE_SIZE; i++) {
-    float angle = (float)i / TABLE_SIZE * 2.0 * PI;
-    sineTable[i] = (byte)(127.5 + 127.5 * sin(angle));
-  }
+  // 3. Pre-calculate lookup tables
+  calcSineTable();
+  updatePortBuffers(); // Initialize buffers for the starting mode
 
   // 4. Configure Non-Blocking ADC (Analog Read)
   ADMUX = (1 << REFS0) | (0 << MUX3) | (0 << MUX2) | (0 << MUX1) | (0 << MUX0); 
@@ -132,12 +133,17 @@ void loop() {
   loopCounter++;
 
   // --- 2. UPDATE SYSTEM TIMING ---
-  // Update the hardware timer to match the new potentiometer reading
-  // OCR1A = 16 ticks per microsecond (at 16MHz clock, prescaler 1)
-  // Safety check: ensure OCR1A is at least 160 ticks (10us * 16)
+  // Atomic update: Reset timer count when changing frequency
+  // to prevent the "wrap-around" lock-up.
   unsigned int ticks = (unsigned int)(delayTime * 16);
-  if (ticks < 160) ticks = 160; 
-  OCR1A = ticks;
+  if (ticks < 160) ticks = 160; // 10us safety floor
+  
+  if (ticks != OCR1A) {
+    cli();
+    OCR1A = ticks;
+    TCNT1 = 0; // Reset counter so it doesn't have to wait for 65k wrap
+    sei();
+  }
 
   // --- 3. UPDATE DISPLAY (Interleaved) ---
   if ((loopCounter & 1023) == 0) {
@@ -151,44 +157,76 @@ void loop() {
  * Fired by hardware based on the OCR1A value.
  * This handles the waveform generation independently of the main loop.
  */
+/**
+ * Timer1 Interrupt Service Routine (ISR)
+ * ULTRA-OPTIMIZED: Uses pre-calculated buffers to drive the DAC.
+ */
 ISR(TIMER1_COMPA_vect) {
-  if (mode == 0) { // SAWTOOTH
-    outputDAC(stepIndex);
-    stepIndex++;
-    if (stepIndex >= TABLE_SIZE) stepIndex = 0; 
-  }
-  
-  else if (mode == 1) { // TRIANGLE
-    stepIndex += direction;
-    if (stepIndex >= TABLE_SIZE - 1) { 
-      stepIndex = TABLE_SIZE - 1; 
-      direction = -1; 
-    }
-    if (stepIndex <= 0) { 
-      stepIndex = 0; 
-      direction = 1; 
-    }
-    outputDAC(stepIndex);
-  }
-  
-  else if (mode == 2) { // SINE
-    outputDAC(sineTable[stepIndex]);
-    stepIndex++;
-    if (stepIndex >= TABLE_SIZE) stepIndex = 0;
-  }
+  // Allow other interrupts (like I2C for the OLED) during this ISR.
+  // This helps eliminate the remaining ripples.
+  sei(); 
+
+  // Output pre-calculated port values (Fastest possible DAC drive)
+  PORTD = portDBuffer[stepIndex];
+  PORTB = portBBuffer[stepIndex];
+
+  stepIndex++;
+  if (stepIndex >= TABLE_SIZE) stepIndex = 0;
 }
 
 // --- HELPER FUNCTIONS ---
 
+// --- RE-ARCHITECTED WAVEFORM ENGINE ---
+
 /**
- * Writes an 8-bit value to the DAC pins.
- * Optimized with Direct Port Manipulation for speed.
- * 
- * Pin mapping on ATmega328P (Arduino Uno/Nano):
- * Port D (D0-D7): Bits 0-7 but D0, D1 are RX/TX
- * Pins used: D2-D9
- * DAC Bit 0-5 (Value bits 0-5) -> Pins D2-D7 (Port D bits 2-7)
- * DAC Bit 6-7 (Value bits 6-7) -> Pins D8-D9 (Port B bits 0-1)
+ * Pre-calculates the Sine table values.
+ */
+void calcSineTable() {
+  for (int i = 0; i < TABLE_SIZE; i++) {
+    float angle = (float)i / TABLE_SIZE * 2.0 * PI;
+    sineTable[i] = (byte)(127.5 + 127.5 * sin(angle));
+  }
+}
+
+/**
+ * Pre-calculates the bit patterns for the CURRENT mode into Port Buffers.
+ * This moves all the "Heavy Lifting" (shifts, masks, conditional logic)
+ * out of the interrupt and into the background.
+ */
+void updatePortBuffers() {
+  // Temporarily disable timer to prevent glitching during calculation
+  TIMSK1 &= ~(1 << OCIE1A);
+
+  for (int i = 0; i < TABLE_SIZE; i++) {
+    byte val = 0;
+    
+    // Choose the raw 8-bit value based on mode
+    if (mode == 0) { // SAWTOOTH
+      val = i;
+    } else if (mode == 1) { // TRIANGLE
+      // Map index to a triangle wave (0-255-0)
+      if (i < 128) val = i * 2;
+      else         val = 255 - ((i - 128) * 2);
+    } else if (mode == 2) { // SINE
+      val = sineTable[i];
+    }
+
+    // MAP VALUE TO HARDWARE PORTS
+    // DAC Bit 0-5 (Value bits 0-5) -> Pins D2-D7 (Port D bits 2-7)
+    // DAC Bit 6-7 (Value bits 6-7) -> Pins D8-D9 (Port B bits 0-1)
+    
+    // Port D Buffer: Preserve RX/TX (bits 0-1) and set bits 2-7
+    portDBuffer[i] = (PORTD & 0x03) | (val << 2);
+    // Port B Buffer: Preserve bits 2-7 and set bits 0-1
+    portBBuffer[i] = (PORTB & 0xFC) | (val >> 6);
+  }
+
+  // Re-enable timer interrupt
+  TIMSK1 |= (1 << OCIE1A);
+}
+
+/**
+ * Writes an 8-bit value to the DAC pins (Legacy support/Setup)
  */
 void outputDAC(int value) {
   // Clear Port D bits 2-7 and set them from value bits 0-5
@@ -213,6 +251,8 @@ void checkSwitch() {
     mode++; 
     if (mode > MAX_MODE) mode = 0;
     
+    // Pre-calculate the new waveform's bit patterns
+    updatePortBuffers();
     // Reset waveform state for clean transition
     stepIndex = 0;
     direction = 1;
