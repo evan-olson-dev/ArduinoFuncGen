@@ -118,36 +118,34 @@ void setup() {
 
 // --- MAIN LOOP ---
 void loop() {
-  // --- 1. READ INPUTS (Throttled to 50Hz) ---
-  // Throttling prevents the ADC from being over-sampled when the CPU is idle 
-  // at low frequencies, which otherwise amplifies electrical noise.
+  // --- 1. READ INPUTS (Throttled to 50Hz with 8x Oversampling) ---
   if (millis() - lastPotSampleTime >= 20) {
-    // Check if the ADC conversion is finished (ADSC bit goes to 0)
     if (!(ADCSRA & (1 << ADSC))) {
-      int potValue = ADC; // Read the full 10-bit result (0-1023)
+      // OVERSAMPLING: Take 8 rapid readings to cancel random noise spikes
+      long potSum = 0;
+      for (int i = 0; i < 8; i++) {
+        ADCSRA |= (1 << ADSC); // Start conversion
+        while (ADCSRA & (1 << ADSC)); // Fast wait (only ~100us)
+        potSum += ADC;
+      }
+      int potValue = potSum / 8;
       
-      // SNAP ZONES: Force absolute extremes at the edges of the dial
-      // to ensure reliable access to min/max despite the delta filter.
+      // SNAP ZONES: Force absolute extremes
       if (potValue < 8) potValue = 0;
       else if (potValue > 1015) potValue = 1023;
       
       // --- ADAPTIVE RESPONSIVE SMOOTHING ---
-      // We adjust the filter strength (alpha) based on how fast the pot is moving.
-      // If moving fast, alpha is high (low lag). If nearly still, alpha is tiny (heavy filtering).
       float diff = abs((float)potValue - smoothedPotValue);
-      float alpha = 0.05; // Heaviest smoothing for idle
-      if (diff > 10) alpha = 0.3; // Responsive mode for actual tuning
+      float alpha = 0.02; // DEEP SMOOTHING: Ultra-stable at idle
+      if (diff > 15) alpha = 0.4; // Responsive mode for tuning
       
       if (smoothedPotValue < 0) smoothedPotValue = potValue; // First run
       smoothedPotValue = (alpha * (float)potValue) + ((1.0 - alpha) * smoothedPotValue);
 
       // --- FREQUENCY HYSTERESIS (LOCK-IN) ---
-      // Only recalculate the hardware delay and update the display if the
-      // change is significant enough to "break the lock."
       float targetFreq = minFreq + (smoothedPotValue / 1023.0) * (maxFreq - minFreq);
       
       if (abs(targetFreq - lastDisplayedFreq) >= 1.0) {
-        // LOCK IN: Frequency is updated and display flag is set
         displayNeedsUpdate = true; 
         lastDisplayedFreq = targetFreq;
 
@@ -158,8 +156,6 @@ void loop() {
         lastPotValue = (int)smoothedPotValue;
       }
       
-      // Start the NEXT conversion immediately
-      ADCSRA |= (1 << ADSC);
       lastPotSampleTime = millis();
     }
   }
