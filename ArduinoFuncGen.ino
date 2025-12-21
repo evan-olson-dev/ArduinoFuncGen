@@ -34,6 +34,16 @@ int lastButtonState = HIGH;
 int stepIndex = 0;      // Current position in the lookup table or counter
 int direction = 1;      // Direction for Triangle wave bouncing (+1 or -1)
 
+// Optimized Timing & Control
+unsigned int loopCounter = 0; // To periodically read sensor inputs
+int pot100 = 0;               // Potentiometer value mapped 0-100
+int delayTime = 0;            // Current delay in microseconds
+
+// USER CONFIGURABLE FREQUENCY RANGE
+// Adjust these to set your desired frequency bounds
+int minFreqDelay = 1000;   // Delay for 0% (in microseconds)
+int maxFreqDelay = 0;      // Delay for 100% (in microseconds)
+
 // --- SETUP ---
 void setup() {
   // 1. Configure DAC Pins (D2-D9) as OUTPUT
@@ -51,20 +61,39 @@ void setup() {
     float angle = (float)i / TABLE_SIZE * 2.0 * PI;
     sineTable[i] = (byte)(127.5 + 127.5 * sin(angle));
   }
+
+  // 4. Configure Non-Blocking ADC (Analog Read)
+  // Set ADC reference to AVCC (5V) and select A0 channel
+  ADMUX = (1 << REFS0); 
+  // Enable ADC, set prescaler to 128 (16MHz/128 = 125kHz ADC clock)
+  ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+  // Start the first conversion
+  ADCSRA |= (1 << ADSC);
 }
 
 // --- MAIN LOOP ---
 void loop() {
-  // --- 1. READ CONTROLS ---
+  // --- 1. READ CONTROLS (Non-Blocking) ---
   
-  // Read frequency potentiometer
-  // Mapping logic: Higher pot value -> smaller delay -> higher frequency.
-  // The '5000' constant sets the base frequency range.
-  int potValue = analogRead(POT_PIN);
-  int delayTime = 5000 / (potValue + 5); 
+  // Check if the ADC conversion is finished (ADSC bit goes to 0)
+  if (!(ADCSRA & (1 << ADSC))) {
+    int potValue = ADC; // Read the 10-bit result
+    
+    // Convert analog read (0-1023) to 0-100
+    pot100 = map(potValue, 0, 1023, 0, 100);
+    
+    // Map 0-100 to the user-defined delay range
+    delayTime = map(pot100, 0, 100, minFreqDelay, maxFreqDelay);
+    
+    // Start the NEXT conversion immediately
+    ADCSRA |= (1 << ADSC);
+  }
 
-  // Check for mode switch button press
-  checkSwitch();
+  // Periodically check the button (much faster than analog read)
+  if ((loopCounter & 255) == 0) {
+    checkSwitch();
+  }
+  loopCounter++;
 
   // --- 2. GENERATE WAVEFORMS ---
   
@@ -107,27 +136,23 @@ void loop() {
 // --- HELPER FUNCTIONS ---
 
 /**
- * Writes an 8-bit value to the DAC pins (D2-D9).
+ * Writes an 8-bit value to the DAC pins.
+ * Optimized with Direct Port Manipulation for speed.
  * 
- * @param value The byte value (0-255) to output.
- * 
- * Optimization Note:
- * This function uses bitwise operations to extract each bit of the 'value'
- * and write it to the corresponding digital pin. 
- * 'value >> N' shifts the bits right by N positions.
- * '& 1' selects the least significant bit of the result.
+ * Pin mapping on ATmega328P (Arduino Uno/Nano):
+ * Port D (D0-D7): Bits 0-7 but D0, D1 are RX/TX
+ * Pins used: D2-D9
+ * DAC Bit 0-5 (Value bits 0-5) -> Pins D2-D7 (Port D bits 2-7)
+ * DAC Bit 6-7 (Value bits 6-7) -> Pins D8-D9 (Port B bits 0-1)
  */
 void outputDAC(int value) {
-  // LSB (Bit 0) -> Pin 2
-  digitalWrite(2, (value >> 0) & 1); 
-  digitalWrite(3, (value >> 1) & 1);
-  digitalWrite(4, (value >> 2) & 1);
-  digitalWrite(5, (value >> 3) & 1);
-  digitalWrite(6, (value >> 4) & 1);
-  digitalWrite(7, (value >> 5) & 1);
-  digitalWrite(8, (value >> 6) & 1); 
-  // MSB (Bit 7) -> Pin 9
-  digitalWrite(9, (value >> 7) & 1); 
+  // Clear Port D bits 2-7 and set them from value bits 0-5
+  // (value << 2) aligns value bit 0 to Port D bit 2
+  PORTD = (PORTD & 0x03) | (value << 2);
+  
+  // Clear Port B bits 0-1 and set them from value bits 6-7
+  // (value >> 6) aligns value bit 6 to Port B bit 0
+  PORTB = (PORTB & 0xFC) | (value >> 6);
 }
 
 /**
