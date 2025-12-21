@@ -50,7 +50,7 @@ long delayTime = 0;           // Current delay in microseconds (using long for f
 // USER CONFIGURABLE FREQUENCY RANGE
 // Adjust these to set your desired frequency bounds
 int minFreqDelay = 1000;   // Delay for 0% (in microseconds)
-int maxFreqDelay = 0;      // Delay for 100% (in microseconds)
+int maxFreqDelay = 10;     // Delay for 100% (Safety Floor for responsive control)
 
 // OLED Refresh Timing
 int displayStep = 0;               // To interleave text updates
@@ -75,14 +75,30 @@ void setup() {
   }
 
   // 4. Configure Non-Blocking ADC (Analog Read)
-  // Set ADC reference to AVCC (5V) and explicitly select A0 channel (binary 0000)
   ADMUX = (1 << REFS0) | (0 << MUX3) | (0 << MUX2) | (0 << MUX1) | (0 << MUX0); 
-  // Enable ADC, set prescaler to 128 (16MHz/128 = 125kHz ADC clock)
   ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
-  // Start the first conversion
   ADCSRA |= (1 << ADSC);
 
-  // 5. Initialize OLED
+  // 5. Configure Timer1 for Interrupt-Driven Generation (Pro Mode)
+  cli(); // Disable interrupts during setup
+  TCCR1A = 0; // Normal mode
+  TCCR1B = 0; // Clear register
+  TCNT1  = 0; // Reset counter
+  
+  // Set Compare Match Register (OCR1A)
+  // Formula: (Clock / (Prescaler * TargetFreq)) - 1
+  // We'll update this dynamically in the loop for frequency control.
+  OCR1A = 16000; // Start with 1ms delay (16MHz / 1 / 1000 - 1)
+  
+  // Turn on CTC (Clear Timer on Compare Match) mode
+  TCCR1B |= (1 << WGM12);
+  // Set CS10 bit for 1 prescaler (maximum precision)
+  TCCR1B |= (1 << CS10);  
+  // Enable timer compare interrupt
+  TIMSK1 |= (1 << OCIE1A);
+  sei(); // Enable interrupts
+
+  // 6. Initialize OLED
   Wire.begin();
   Wire.setClock(100000L); // Standard 100kHz clock for stability
   oled.begin(&Adafruit128x64, I2C_ADDRESS);
@@ -115,32 +131,39 @@ void loop() {
   }
   loopCounter++;
 
-  // --- 2. UPDATE DISPLAY (Interleaved) ---
-  // Every 1024 iterations (~25-50ms), we update exactly ONE line of text.
-  // This spreads the I2C cost so the waveform doesn't ripple.
+  // --- 2. UPDATE SYSTEM TIMING ---
+  // Update the hardware timer to match the new potentiometer reading
+  // OCR1A = 16 ticks per microsecond (at 16MHz clock, prescaler 1)
+  // Safety check: ensure OCR1A is at least 160 ticks (10us * 16)
+  unsigned int ticks = (unsigned int)(delayTime * 16);
+  if (ticks < 160) ticks = 160; 
+  OCR1A = ticks;
+
+  // --- 3. UPDATE DISPLAY (Interleaved) ---
   if ((loopCounter & 1023) == 0) {
     updateDisplayStep();
   }
+}
 
-  // --- 3. GENERATE WAVEFORMS ---
-  
+// --- HARDWARE INTERRUPT (PRO MODE) ---
+/**
+ * Timer1 Interrupt Service Routine (ISR)
+ * Fired by hardware based on the OCR1A value.
+ * This handles the waveform generation independently of the main loop.
+ */
+ISR(TIMER1_COMPA_vect) {
   if (mode == 0) { // SAWTOOTH
-    // Ramps up from 0 to 255, then instantly resets to 0.
     outputDAC(stepIndex);
     stepIndex++;
     if (stepIndex >= TABLE_SIZE) stepIndex = 0; 
   }
   
   else if (mode == 1) { // TRIANGLE
-    // Ramps up to 255, then ramps down to 0.
     stepIndex += direction;
-    
-    // Top bounce
     if (stepIndex >= TABLE_SIZE - 1) { 
       stepIndex = TABLE_SIZE - 1; 
       direction = -1; 
     }
-    // Bottom bounce
     if (stepIndex <= 0) { 
       stepIndex = 0; 
       direction = 1; 
@@ -149,15 +172,10 @@ void loop() {
   }
   
   else if (mode == 2) { // SINE
-    // Outputs values from the pre-calculated sine table.
     outputDAC(sineTable[stepIndex]);
     stepIndex++;
     if (stepIndex >= TABLE_SIZE) stepIndex = 0;
   }
-
-  // --- 3. TIMING CONTROL ---
-  // Controls the frequency of the waveform
-  delayMicroseconds(delayTime);
 }
 
 // --- HELPER FUNCTIONS ---
@@ -199,8 +217,8 @@ void checkSwitch() {
     stepIndex = 0;
     direction = 1;
     
-    // Simple debounce delay
-    delay(200); 
+    // Simple debounce delay (shortened to keep loop responsive)
+    delay(50); 
   }
   lastButtonState = currentState;
 }
