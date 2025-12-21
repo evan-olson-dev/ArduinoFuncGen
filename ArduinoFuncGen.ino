@@ -52,10 +52,10 @@ int direction = 1;      // Direction for Triangle wave bouncing (+1 or -1)
 unsigned int loopCounter = 0; // To periodically read sensor inputs
 long delayTime = 0;           // Current delay in microseconds (using long for frequency math)
 
-// USER CONFIGURABLE FREQUENCY RANGE
-// Adjust these to set your desired frequency bounds
-int minFreqDelay = 1000;   // Delay for 0% (in microseconds)
-int maxFreqDelay = 10;     // Delay for 100% (Safety Floor for responsive control)
+// USER CONFIGURABLE FREQUENCY RANGE (In Hz)
+// Linear mapping ensures the dial feels consistent from low to high frequencies.
+float minFreq = 1.0;     // Frequency at 0% (in Hz)
+float maxFreq = 380.0;   // Frequency at 100% (in Hz, limited by 10us safety floor)
 
 // OLED Refresh Timing
 int displayStep = 0;               // To interleave text updates
@@ -121,10 +121,23 @@ void loop() {
   if (!(ADCSRA & (1 << ADSC))) {
     int potValue = ADC; // Read the full 10-bit result (0-1023)
     
+    // SNAP ZONES: Force absolute extremes at the edges of the dial
+    // to ensure reliable access to min/max despite the delta filter.
+    if (potValue < 8) potValue = 0;
+    else if (potValue > 1015) potValue = 1023;
+    
     // DELTA-BASED FILTER: Only react if the pot moves beyond noise threshold
     // (threshold of 8 = approx 1% of travel)
     if (abs(potValue - lastPotValue) > 8) {
-      delayTime = map(potValue, 0, 1023, minFreqDelay, maxFreqDelay);
+      // LINEAR FREQUENCY MAPPING: Potentiometer -> Target Hz
+      float targetFreq = minFreq + ((float)potValue / 1023.0) * (maxFreq - minFreq);
+      
+      // Convert Hz to Hardware Delay (microseconds per sample)
+      // delay = 1,000,000 / (freq * 256 samples)
+      if (targetFreq > 0) {
+        delayTime = (long)(1000000.0 / (targetFreq * (float)TABLE_SIZE));
+      }
+
       lastPotValue = potValue;
       displayNeedsUpdate = true; // Flag for OLED refresh
     }
