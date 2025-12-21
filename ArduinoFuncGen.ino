@@ -60,6 +60,9 @@ int maxFreqDelay = 10;     // Delay for 100% (Safety Floor for responsive contro
 // OLED Refresh Timing
 int displayStep = 0;               // To interleave text updates
 int lastMode = -1;                 // To trigger full screen clear on mode change
+int lastPotValue = -1;             // To detect significant changes
+bool displayNeedsUpdate = false;   // Flag to silence I2C bus when idle
+unsigned long lastHeartbeat = 0;   // To force occasional refresh
 
 // --- SETUP ---
 void setup() {
@@ -118,9 +121,13 @@ void loop() {
   if (!(ADCSRA & (1 << ADSC))) {
     int potValue = ADC; // Read the full 10-bit result (0-1023)
     
-    // Map full 10-bit resolution directly to the delay range.
-    // This removes the "steps" and "dead zones" caused by 0-100 mapping.
-    delayTime = map(potValue, 0, 1023, minFreqDelay, maxFreqDelay);
+    // DELTA-BASED FILTER: Only react if the pot moves beyond noise threshold
+    // (threshold of 8 = approx 1% of travel)
+    if (abs(potValue - lastPotValue) > 8) {
+      delayTime = map(potValue, 0, 1023, minFreqDelay, maxFreqDelay);
+      lastPotValue = potValue;
+      displayNeedsUpdate = true; // Flag for OLED refresh
+    }
     
     // Start the NEXT conversion immediately
     ADCSRA |= (1 << ADSC);
@@ -128,7 +135,9 @@ void loop() {
 
   // Periodically check the button (much faster than analog read)
   if ((loopCounter & 255) == 0) {
+    int prevMode = mode;
     checkSwitch();
+    if (mode != prevMode) displayNeedsUpdate = true;
   }
   loopCounter++;
 
@@ -145,9 +154,17 @@ void loop() {
     sei();
   }
 
-  // --- 3. UPDATE DISPLAY (Interleaved) ---
-  if ((loopCounter & 1023) == 0) {
-    updateDisplayStep();
+  // --- 3. SILENT DISPLAY UPDATES ---
+  // Only update the display if something changed, OR every 2 seconds (heartbeat)
+  if (displayNeedsUpdate || (millis() - lastHeartbeat > 2000)) {
+    if ((loopCounter & 1023) == 0) {
+      updateDisplayStep();
+      // If we finished all 3 steps of the update, clear the flag
+      if (displayStep == 0) {
+        displayNeedsUpdate = false;
+        lastHeartbeat = millis();
+      }
+    }
   }
 }
 
@@ -162,10 +179,6 @@ void loop() {
  * ULTRA-OPTIMIZED: Uses pre-calculated buffers to drive the DAC.
  */
 ISR(TIMER1_COMPA_vect) {
-  // Allow other interrupts (like I2C for the OLED) during this ISR.
-  // This helps eliminate the remaining ripples.
-  sei(); 
-
   // Output pre-calculated port values (Fastest possible DAC drive)
   PORTD = portDBuffer[stepIndex];
   PORTB = portBBuffer[stepIndex];
