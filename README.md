@@ -1,69 +1,40 @@
-# 8-Bit Arduino Function Generator
+# 8-Bit High-Performance Function Generator
 
-A simple yet effective function generator built using an Arduino and an 8-bit R-2R Resistor Ladder DAC. It generates Sine, Triangle, and Sawtooth waveforms with variable frequency.
+This project transforms a standard Arduino Uno into a laboratory-grade function generator capable of producing Sine, Triangle, and Sawtooth waves with ultra-stable frequency control and high-speed output.
 
-## Features
+## 🚀 Key Features
 
-- **3 Waveforms**: Sine, Triangle, Sawtooth.
-- **8-Bit Resolution**: Uses an R-2R ladder on digital pins D2-D9.
-- **Variable Frequency**: Controlled via a potentiometer on pin A0.
-- **Mode Switching**: Pushbutton on pin D10 cycles through waveforms.
+*   **Interrupt-Driven Hardware Engine**: Waveforms are generated using Timer1 hardware interrupts for jitter-free output up to ~400Hz (100kHz sample rate).
+*   **Zero-Overhead DAC Drive**: Uses pre-calculated port buffers and direct register manipulation for maximum execution speed.
+*   **Lab-Grade DSP Filtering**: 8x Oversampling, Adaptive EMA Smoothing, and Lock-in Hysteresis ensure a perfectly stationary signal.
+*   **High-Visibility UI**: Interleaved SSD1306 OLED updates with `set2X` double-height text for clarity.
+*   **Linear Frequency Mapping**: Intuitive 1Hz to 380Hz control across the entire dial.
 
-## Hardware Requirements
+## 📂 Technical Documentation
 
-| Component | Quantity | Notes |
-| :--- | :---: | :--- |
-| Arduino (Uno, Nano, etc.) | 1 | 5V logic recommended |
-| Resistors (10kΩ & 20kΩ) | Many | For R-2R Ladder (or pre-made DAC module) |
-| Capacitor (0.01uF) | 1 | Output filtering or power decoupling |
-| Potentiometer (10kΩ-100kΩ) | 1 | For frequency control |
-| Pushbutton | 1 | For mode switching |
-| Breadboard & Jumpers | - | - |
+To keep the codebase easy to maintain, the documentation is broken down into specialized architectural guides in the `markdownDocs/` folder:
 
-## Pinout Configuration
+*   [**Signal Engine Guide** (markdownDocs/ENGINE.md)](markdownDocs/ENGINE.md) - Deep dive into Timer1 interrupts, port buffering, and hardware register configuration.
+*   [**DSP & Filtering Guide** (markdownDocs/FILTERING.md)](markdownDocs/FILTERING.md) - Mathematical explanation of oversampling, adaptive alpha filters, and the frequency lock-in system.
+*   [**Waveform Mathematics** (markdownDocs/WAVEFORMS.md)](markdownDocs/WAVEFORMS.md) - How lookup tables are generated and scaled for 8-bit R2R DACs.
 
-| Arduino Pin | Function | Description |
-| :--- | :--- | :--- |
-| **D2 - D9** | DAC Switch (Output) | **D2 = LSB**, **D9 = MSB**. Connect to R-2R Ladder. |
-| **D10** | Mode Button (Input) | Connect to Button, then to GND. (Uses Internal Pullup). |
-| **A0** | Rate Control (Input) | Center pin of Potentiometer. Side pins to 5V and GND. |
+## 🛠️ Hardware Setup
 
-### Wiring Diagram
+### 1. The DAC (R-2R Ladder)
+Construct an 8-bit R-2R ladder and connect it to the following pins:
+*   **D2 (LSB)** to **D9 (MSB)**
 
-![Circuit Diagram](circuit_diagram.png)
+### 2. Control & UI
+*   **Potentiometer**: Connect to **A0** (Voltage divider between 5V and GND).
+*   **Mode Button**: Connect between **D10** and **GND**.
+*   **OLED Display**: Connect via I2C (**A4/SDA**, **A5/SCL**).
 
-### Simulation
+## 📥 Installation
 
-You can view and simulate this project online on Tinkercad:
-[**Tinkercad Simulation: Arduino 8-Bit R-Ladder FuncGen**](https://www.tinkercad.com/things/7jz6wlpdkqy-arduino8bitrladderfuncgen?sharecode=8w037cdZbv54rexPCczLHMjg9Wr_AuL3hwiOL7PJ9r8)
+1.  Install the **SSD1306Ascii** library (by Bill Greiman) via the Arduino Library Manager.
+2.  Open `ArduinoFuncGen.ino` in the Arduino IDE.
+3.  Select **Arduino Uno** and your COM port.
+4.  Upload and enjoy the clean signal!
 
-[**Interactive R-2R Logic Simulator**](https://evan-olson-dev.github.io/ArduinoFuncGen/)
-
-### R-2R DAC Wiring
-
-Connect the R-2R ladder to pins D2 through D9. 
-- **D2** is the Least Significant Bit (LSB).
-- **D9** is the Most Significant Bit (MSB).
-
-## Usage
-
-1.  **Build the Circuit**: Assemble the R-2R ladder and connect the controls as per the pinout.
-2.  **Upload Code**: Open `ArduinoFuncGen.ino` in the Arduino IDE and upload it to your board.
-3.  **Operation**:
-    - Connect the output of the R-2R ladder to an oscilloscope or speaker (via amplifier).
-    - Turn the **Potentiometer** to adjust the frequency.
-    - Press the **Button** to switch between Sawtooth -> Triangle -> Sine.
-
-## Code Overview
-
-The core logic resides in `ArduinoFuncGen.ino`.
-- **Waveform Generation**:
-    - **Sine**: Uses a pre-calculated 256-byte look-up table for speed.
-    - **Sawtooth**: Simply increments a counter from 0 to 255.
-    - **Triangle**: Increments and decrements a counter.
-- **DAC Output**: The `outputDAC()` function manually writes bits to pins D2-D9. This is "unrolled" and uses bitwise shifting for efficiency.
-- **Timing**: `delayMicroseconds()` controls the loop speed based on the potentiometer reading.
-
-## License
-
-Open Source. Feel free to modify and improve!
+---
+*Created with 💙 for the Arduino community.*
