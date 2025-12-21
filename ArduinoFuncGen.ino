@@ -84,7 +84,7 @@ void setup() {
 
   // 5. Initialize OLED
   Wire.begin();
-  Wire.setClock(400000L); // Set I2C clock to 400kHz for speed
+  Wire.setClock(100000L); // Standard 100kHz clock for stability
   oled.begin(&Adafruit128x64, I2C_ADDRESS);
   oled.displayRemap(true); // Rotate display 180 degrees
   oled.setFont(System5x7);
@@ -213,6 +213,7 @@ void updateDisplayStep() {
   // Line 0: Header (Static / Yellow Section)
   if (displayStep == 0) {
     if (mode != lastMode) {
+      oled.set1X();
       oled.setCursor(0, 0);
       oled.print("  FUNC GEN v2.0 "); 
       lastMode = mode;
@@ -220,36 +221,31 @@ void updateDisplayStep() {
     displayStep++;
   }
   
-  // Line 1: Mode Name (Blue Section Start)
+  // Line 1: Mode Name (Blue Section - Double Height)
   else if (displayStep == 1) {
+    oled.set2X();
     oled.setCursor(0, 2);
-    oled.print("MODE: ");
-    if (mode == 0)      oled.print("SAWTOOTH ");
-    else if (mode == 1) oled.print("TRIANGLE ");
+    if (mode == 0)      oled.print("SAW      ");
+    else if (mode == 1) oled.print("TRI      ");
     else if (mode == 2) oled.print("SINE     ");
     displayStep++;
   }
 
-  // Line 2: Delay Value (Blue Section)
+  // Line 2: Estimated Frequency (Blue Section - Double Height)
   else if (displayStep == 2) {
-    oled.setCursor(0, 4);
-    oled.print("DELAY: ");
-    oled.print(delayTime);
-    oled.print(" us    ");
-    displayStep++;
-  }
-
-  // Line 3: Estimated Frequency (Blue Section)
-  else if (displayStep == 3) {
-    oled.setCursor(0, 6);
+    oled.set2X();
+    oled.setCursor(0, 5);
     float freq = 0;
     if (delayTime > 0) {
-      freq = 1000000.0 / (float)(delayTime * TABLE_SIZE);
+      // Force floating point math to prevent 16-bit overflow (delayTime * 256)
+      freq = 1000000.0 / ((float)delayTime * (float)TABLE_SIZE);
     } else {
-      freq = 600; 
+      freq = 600.0; 
     }
-    oled.print("FREQ: ~");
-    oled.print(freq, 1);
+    
+    // Clear the line with spaces before printing for cleaner updates
+    if (freq < 100) oled.print(" ");
+    oled.print(freq, 0); 
     oled.print(" Hz    ");
     displayStep = 0; // Loop back
   }
