@@ -45,7 +45,7 @@ int direction = 1;      // Direction for Triangle wave bouncing (+1 or -1)
 
 // Optimized Timing & Control
 unsigned int loopCounter = 0; // To periodically read sensor inputs
-int delayTime = 0;            // Current delay in microseconds
+long delayTime = 0;           // Current delay in microseconds (using long for frequency math)
 
 // USER CONFIGURABLE FREQUENCY RANGE
 // Adjust these to set your desired frequency bounds
@@ -210,7 +210,7 @@ void checkSwitch() {
  * This eliminates the "Big Ripple" by keeping I2C pauses very short.
  */
 void updateDisplayStep() {
-  // Line 0: Header (Static / Yellow Section)
+  // Line 0: Header (System Info)
   if (displayStep == 0) {
     if (mode != lastMode) {
       oled.set1X();
@@ -221,7 +221,7 @@ void updateDisplayStep() {
     displayStep++;
   }
   
-  // Line 1: Mode Name (Blue Section - Double Height)
+  // Line 1: Mode Name (Blue Section - Large)
   else if (displayStep == 1) {
     oled.set2X();
     oled.setCursor(0, 2);
@@ -231,22 +231,27 @@ void updateDisplayStep() {
     displayStep++;
   }
 
-  // Line 2: Estimated Frequency (Blue Section - Double Height)
+  // Line 2: Frequency & Timing Value (Blue Section - Large)
   else if (displayStep == 2) {
     oled.set2X();
     oled.setCursor(0, 5);
+    
+    // 1. Calculate Frequency safely
     float freq = 0;
     if (delayTime > 0) {
-      // Force floating point math to prevent 16-bit overflow (delayTime * 256)
-      freq = 1000000.0 / ((float)delayTime * (float)TABLE_SIZE);
+      // Calculate microseconds per cycle (period)
+      // For delayTime = 1000 and TABLE_SIZE = 256, periodUs = 256,000 (fits in unsigned long)
+      unsigned long periodUs = (unsigned long)delayTime * (unsigned long)TABLE_SIZE;
+      freq = 1000000.0 / (float)periodUs;
     } else {
-      freq = 600.0; 
+      freq = 600.0; // Estimate for delay = 0
     }
-    
-    // Clear the line with spaces before printing for cleaner updates
-    if (freq < 100) oled.print(" ");
-    oled.print(freq, 0); 
+
+    // 2. Display Frequency
+    if (freq < 100.0) oled.print(" ");
+    oled.print((int)freq); // Print as whole number for maximum stability
     oled.print(" Hz    ");
+    
     displayStep = 0; // Loop back
   }
 }
