@@ -7,7 +7,16 @@
 // DAC PINS: D2(LSB) through D9(MSB)
 // BUTTON:   D10 (Connect to GND, enables internal pullup)
 // POT:      A0 (Connect between 5V and GND for frequency control)
+// OLED:     A4 (SDA), A5 (SCL)
 // ---------------------------------------------------------
+
+#include <Wire.h>
+#include "SSD1306Ascii.h"
+#include "SSD1306AsciiWire.h"
+
+// OLED Address (usually 0x3C)
+#define I2C_ADDRESS 0x3C
+SSD1306AsciiWire oled;
 
 // --- CONSTANTS & GLOBALS ---
 
@@ -43,6 +52,11 @@ int delayTime = 0;            // Current delay in microseconds
 int minFreqDelay = 1000;   // Delay for 0% (in microseconds)
 int maxFreqDelay = 0;      // Delay for 100% (in microseconds)
 
+// OLED Refresh Timing
+unsigned long lastDisplayUpdate = 0;
+const long DISPLAY_INTERVAL = 250; // Update display every 250ms
+int lastMode = -1;                 // To trigger full screen clear on mode change
+
 // --- SETUP ---
 void setup() {
   // 1. Configure DAC Pins (D2-D9) as OUTPUT
@@ -68,6 +82,15 @@ void setup() {
   ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
   // Start the first conversion
   ADCSRA |= (1 << ADSC);
+
+  // 5. Initialize OLED
+  Wire.begin();
+  Wire.setClock(400000L); // Set I2C clock to 400kHz for speed
+  oled.begin(&Adafruit128x64, I2C_ADDRESS);
+  oled.setFont(System5x7);
+  oled.clear();
+  oled.println("  FUNC GEN v2.0");
+  oled.println("----------------");
 }
 
 // --- MAIN LOOP ---
@@ -92,7 +115,14 @@ void loop() {
   }
   loopCounter++;
 
-  // --- 2. GENERATE WAVEFORMS ---
+  // --- 2. UPDATE DISPLAY (Throttled) ---
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastDisplayUpdate >= DISPLAY_INTERVAL) {
+    lastDisplayUpdate = currentMillis;
+    updateDisplay();
+  }
+
+  // --- 3. GENERATE WAVEFORMS ---
   
   if (mode == 0) { // SAWTOOTH
     // Ramps up from 0 to 255, then instantly resets to 0.
@@ -173,4 +203,43 @@ void checkSwitch() {
     delay(200); 
   }
   lastButtonState = currentState;
+}
+
+/**
+ * Updates the OLED display with the current frequency and mode.
+ * Uses lightweight text-only updates to minimize waveform impact.
+ */
+void updateDisplay() {
+  // If mode changed, clear the screen for a clean UI
+  if (mode != lastMode) {
+    oled.clear();
+    oled.println("  FUNC GEN v2.0");
+    oled.println("----------------");
+    lastMode = mode;
+  }
+
+  // Display Mode
+  oled.setCursor(0, 3);
+  oled.print("MODE: ");
+  if (mode == 0)      oled.println("SAWTOOTH ");
+  else if (mode == 1) oled.println("TRIANGLE ");
+  else if (mode == 2) oled.println("SINE     ");
+
+  // Display Frequency Info
+  oled.setCursor(0, 5);
+  oled.print("DELAY: ");
+  oled.print(delayTime);
+  oled.print(" us    ");
+
+  oled.setCursor(0, 7);
+  // Rough estimate: f = 1 / (delayTime * tableSize)
+  float freq = 0;
+  if (delayTime > 0) {
+    freq = 1000000.0 / (float)(delayTime * TABLE_SIZE);
+  } else {
+    freq = 600; // Theoretical max approx (will vary by mode)
+  }
+  oled.print("FREQ: ~");
+  oled.print(freq, 1);
+  oled.print(" Hz    ");
 }
